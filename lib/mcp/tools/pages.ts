@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { getAllPages, getPageById, createPage, updatePage, deletePage } from '@/lib/repositories/pageRepository';
+import { getAllPages, getPageById, getPagesByFolder, createPage, updatePage, deletePage } from '@/lib/repositories/pageRepository';
 import { getAllPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { upsertDraftLayers } from '@/lib/repositories/pageLayersRepository';
 
@@ -44,13 +44,17 @@ export function registerPageTools(server: McpServer) {
     async (args) => {
       const isIndex = args.is_index || false;
       const slug = isIndex ? '' : (args.slug || args.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+      const folderId = args.page_folder_id ?? null;
+
+      const siblings = await getPagesByFolder(folderId);
+      const maxOrder = siblings.reduce((max, p) => Math.max(max, p.order ?? 0), -1);
 
       const page = await createPage({
         name: args.name,
         slug,
         is_published: false,
-        page_folder_id: args.page_folder_id ?? null,
-        order: 0,
+        page_folder_id: folderId,
+        order: maxOrder + 1,
         depth: 0,
         is_index: isIndex,
         is_dynamic: args.is_dynamic || false,
