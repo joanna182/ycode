@@ -145,7 +145,7 @@ export const formTemplates: Record<string, BlockTemplate> = {
             }),
             {
               name: 'input',
-              classes: ['w-full', 'px-4', 'py-2.5', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-xl', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
+              classes: ['w-[100%]', 'h-[38px]', 'pl-[16px]', 'pr-[16px]', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-[12px]', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
               attributes: {
                 type: 'text',
                 name: 'name',
@@ -154,6 +154,36 @@ export const formTemplates: Record<string, BlockTemplate> = {
               },
               settings: {
                 id: 'name'
+              },
+              design: {
+                sizing: {
+                  isActive: true,
+                  width: '100%',
+                  height: '38px'
+                },
+                spacing: {
+                  isActive: true,
+                  paddingLeft: '1rem',
+                  paddingRight: '1rem'
+                },
+                borders: {
+                  isActive: true,
+                  borderWidth: '1px',
+                  borderColor: 'rgba(115, 115, 115, 0.15)',
+                  borderRadius: '0.75rem'
+                },
+                backgrounds: {
+                  isActive: true,
+                  backgroundColor: 'rgba(212, 212, 212, 0.1)'
+                },
+                typography: {
+                  isActive: true,
+                  fontSize: '14px',
+                  lineHeight: '24px',
+                  letterSpacing: '0px',
+                  color: '#171717',
+                  placeholderColor: '#a8a8a8'
+                }
               }
             }
           ],
@@ -198,7 +228,7 @@ export const formTemplates: Record<string, BlockTemplate> = {
             }),
             {
               name: 'input',
-              classes: ['w-full', 'px-4', 'py-2.5', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-xl', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
+              classes: ['w-[100%]', 'h-[38px]', 'pl-[16px]', 'pr-[16px]', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-[12px]', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
               attributes: {
                 type: 'email',
                 name: 'email',
@@ -207,6 +237,36 @@ export const formTemplates: Record<string, BlockTemplate> = {
               },
               settings: {
                 id: 'email'
+              },
+              design: {
+                sizing: {
+                  isActive: true,
+                  width: '100%',
+                  height: '38px'
+                },
+                spacing: {
+                  isActive: true,
+                  paddingLeft: '1rem',
+                  paddingRight: '1rem'
+                },
+                borders: {
+                  isActive: true,
+                  borderWidth: '1px',
+                  borderColor: 'rgba(115, 115, 115, 0.15)',
+                  borderRadius: '0.75rem'
+                },
+                backgrounds: {
+                  isActive: true,
+                  backgroundColor: 'rgba(212, 212, 212, 0.1)'
+                },
+                typography: {
+                  isActive: true,
+                  fontSize: '14px',
+                  lineHeight: '24px',
+                  letterSpacing: '0px',
+                  color: '#171717',
+                  placeholderColor: '#a8a8a8'
+                }
               }
             }
           ],
@@ -251,7 +311,7 @@ export const formTemplates: Record<string, BlockTemplate> = {
             }),
             {
               name: 'textarea',
-              classes: ['w-full', 'px-4', 'py-2.5', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-xl', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
+              classes: ['w-[100%]', 'pt-[8px]', 'pb-[8px]', 'pl-[16px]', 'pr-[16px]', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-[12px]', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
               attributes: {
                 name: 'message',
                 placeholder: 'Message',
@@ -260,6 +320,37 @@ export const formTemplates: Record<string, BlockTemplate> = {
               },
               settings: {
                 id: 'message'
+              },
+              design: {
+                sizing: {
+                  isActive: true,
+                  width: '100%'
+                },
+                spacing: {
+                  isActive: true,
+                  paddingLeft: '1rem',
+                  paddingRight: '1rem',
+                  paddingTop: '8px',
+                  paddingBottom: '8px'
+                },
+                borders: {
+                  isActive: true,
+                  borderWidth: '1px',
+                  borderColor: 'rgba(115, 115, 115, 0.15)',
+                  borderRadius: '0.75rem'
+                },
+                backgrounds: {
+                  isActive: true,
+                  backgroundColor: 'rgba(212, 212, 212, 0.1)'
+                },
+                typography: {
+                  isActive: true,
+                  fontSize: '14px',
+                  lineHeight: '24px',
+                  letterSpacing: '0px',
+                  color: '#171717',
+                  placeholderColor: '#a8a8a8'
+                }
               }
             }
           ],
@@ -275,7 +366,7 @@ export const formTemplates: Record<string, BlockTemplate> = {
         // Submit button
         {
           name: 'button',
-          classes: ['inline-block', 'px-5', 'py-2', 'text-[14px]', 'tracking-wide', 'leading-[20px]', 'text-white', 'bg-black', 'border', 'border-solid', 'border-transparent', 'rounded-md', 'focus:outline-none', 'cursor-pointer'],
+          classes: ['flex', 'flex-row', 'items-center', 'justify-center', 'text-[#FFFFFF]', 'pr-[16px]', 'pl-[16px]', 'h-[38px]', 'text-[14px]', 'rounded-[12px]', 'bg-[#171717]'],
           attributes: {
             type: 'button'
           },
@@ -296,33 +387,19 @@ export const formTemplates: Record<string, BlockTemplate> = {
             }),
           ],
           design: {
-            layout: {
+            typography: {
               isActive: true,
-              display: 'inline-block'
+              color: '#ffffff',
+              fontSize: '14px'
             },
             spacing: {
               isActive: true,
-              paddingLeft: '1.25rem',
-              paddingRight: '1.25rem',
-              paddingTop: '0.5rem',
-              paddingBottom: '0.5rem'
+              paddingLeft: '16',
+              paddingRight: '16'
             },
             backgrounds: {
               isActive: true,
-              backgroundColor: '#000000'
-            },
-            typography: {
-              isActive: true,
-              fontSize: '14px',
-              letterSpacing: '0.025em',
-              lineHeight: '20px',
-              color: '#ffffff'
-            },
-            borders: {
-              isActive: true,
-              borderWidth: '1px',
-              borderColor: 'transparent',
-              borderRadius: '0.375rem'
+              backgroundColor: '#171717'
             }
           }
         }
@@ -469,7 +546,7 @@ export const formTemplates: Record<string, BlockTemplate> = {
         }),
         {
           name: 'textarea',
-          classes: ['w-[100%]', 'h-[38px]', 'pl-[16px]', 'pr-[16px]', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-[12px]', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
+          classes: ['w-[100%]', 'pt-[8px]', 'pb-[8px]', 'pl-[16px]', 'pr-[16px]', 'text-[14px]', 'leading-[24px]', 'tracking-[0px]', 'text-[#171717]', 'bg-[#d4d4d4]/10', 'border', 'border-solid', 'border-[#737373]/[0.15]', 'rounded-[12px]', 'placeholder:text-[#a8a8a8]', 'focus:outline-none', 'focus:border-[#737373]/20', 'disabled:opacity-50', 'cursor-text'],
           settings: {
             id: 'textarea'
           },
@@ -486,8 +563,8 @@ export const formTemplates: Record<string, BlockTemplate> = {
               isActive: true,
               paddingLeft: '1rem',
               paddingRight: '1rem',
-              paddingTop: '0.625rem',
-              paddingBottom: '0.625rem'
+              paddingTop: '8px',
+              paddingBottom: '8px'
             },
             borders: {
               isActive: true,
