@@ -51,7 +51,10 @@ import InputSettings from './InputSettings';
 import SelectOptionsSettings from './SelectOptionsSettings';
 import LabelSettings from './LabelSettings';
 import LinkSettings, { type LinkSettingsValue } from './LinkSettings';
-import RichTextEditor from './RichTextEditor';
+import ComponentInstanceSidebar from './ComponentInstanceSidebar';
+import ComponentVariableOverrides from './ComponentVariableOverrides';
+import ExpandableRichTextEditor from './ExpandableRichTextEditor';
+import ComponentVariableLabel, { VARIABLE_TYPE_ICONS } from './ComponentVariableLabel';
 import InteractionsPanel from './InteractionsPanel';
 import LayoutControls from './LayoutControls';
 import LayerStylesPanel from './LayerStylesPanel';
@@ -82,23 +85,18 @@ import { sanitizeHtmlId } from '@/lib/html-utils';
 import { isFieldVariable, getCollectionVariable, findParentCollectionLayer, findAllParentCollectionLayers, isTextEditable, findLayerWithParent, resetBindingsOnCollectionSourceChange, isInputInsideFilter } from '@/lib/layer-utils';
 import { detachSpecificLayerFromComponent } from '@/lib/component-utils';
 import { convertContentToValue, parseValueToContent } from '@/lib/cms-variables-utils';
+import { createTextComponentVariableValue } from '@/lib/variable-utils';
+import { getRichTextValue } from '@/lib/tiptap-utils';
 import { DEFAULT_TEXT_STYLES, getTextStyle } from '@/lib/text-format-utils';
-import { buildFieldGroups, getFieldIcon, isMultipleAssetField, MULTI_ASSET_COLLECTION_ID } from '@/lib/collection-field-utils';
+import { buildFieldGroupsForLayer, getFieldIcon, isMultipleAssetField, MULTI_ASSET_COLLECTION_ID } from '@/lib/collection-field-utils';
 
 // 7. Types
-import type { Layer, FieldVariable, CollectionField, CollectionVariable } from '@/types';
-import { createTextComponentVariableValue, extractTiptapFromComponentVariable } from '@/lib/variable-utils';
+import type { Layer, FieldVariable, CollectionField, CollectionVariable, ComponentVariable } from '@/types';
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
@@ -168,7 +166,6 @@ const RightSidebar = React.memo(function RightSidebar({
   const [fieldBindingOpen, setFieldBindingOpen] = useState(true);
   const [contentOpen, setContentOpen] = useState(true);
   const [localeLabelOpen, setLocaleLabelOpen] = useState(true);
-  const [variablesOpen, setVariablesOpen] = useState(true);
   const [variablesDialogOpen, setVariablesDialogOpen] = useState(false);
   const [variablesDialogInitialId, setVariablesDialogInitialId] = useState<string | null>(null);
 
@@ -210,7 +207,7 @@ const RightSidebar = React.memo(function RightSidebar({
 
   const getComponentById = useComponentsStore((state) => state.getComponentById);
   const componentDrafts = useComponentsStore((state) => state.componentDrafts);
-  const updateComponentDraft = useComponentsStore((state) => state.updateComponentDraft);
+  const addTextVariable = useComponentsStore((state) => state.addTextVariable);
   const updateTextVariable = useComponentsStore((state) => state.updateTextVariable);
 
   const collections = useCollectionsStore((state) => state.collections);
@@ -857,21 +854,7 @@ const RightSidebar = React.memo(function RightSidebar({
 
   // Get content value for display (returns Tiptap JSON or string)
   const getContentValue = useCallback((layer: Layer | null): any => {
-    if (!layer) return { type: 'doc', content: [{ type: 'paragraph' }] };
-
-    // Check layer.variables.text
-    if (layer.variables?.text) {
-      // DynamicRichTextVariable (new format with formatting support)
-      if (layer.variables.text.type === 'dynamic_rich_text') {
-        // Return Tiptap JSON directly for RichTextEditor (withFormatting mode)
-        return layer.variables.text.data.content;
-      } else if (layer.variables.text.type === 'dynamic_text') {
-        // Return string for DynamicTextVariable
-        return layer.variables.text.data.content;
-      }
-    }
-
-    return { type: 'doc', content: [{ type: 'paragraph' }] };
+    return getRichTextValue(layer?.variables);
   }, []);
 
   // Handle collection binding change (also resets child bindings when source changes)
@@ -1523,24 +1506,6 @@ const RightSidebar = React.memo(function RightSidebar({
     return findParentCollectionLayer(layers, selectedLayerId);
   }, [selectedLayerId, editingComponentId, componentDrafts, currentPageId, draftsByPageId]);
 
-  // Find all parent collection layers (for nested collections)
-  const allParentCollectionLayers = useMemo(() => {
-    if (!selectedLayerId || !currentPageId) return [];
-
-    // Get layers from either component draft or page draft
-    let layers: Layer[] = [];
-    if (editingComponentId) {
-      layers = componentDrafts[editingComponentId] || [];
-    } else {
-      const draft = draftsByPageId[currentPageId];
-      layers = draft ? draft.layers : [];
-    }
-
-    if (!layers.length) return [];
-
-    return findAllParentCollectionLayers(layers, selectedLayerId);
-  }, [selectedLayerId, editingComponentId, componentDrafts, currentPageId, draftsByPageId]);
-
   // Get collection fields if parent collection layer exists
   const currentPage = useMemo(() => {
     if (!currentPageId) {
@@ -1567,32 +1532,18 @@ const RightSidebar = React.memo(function RightSidebar({
   }, [parentCollectionLayer, fields, currentPage]);
 
   // Build field groups for multi-source inline variable selection
-  // This allows showing both collection layer fields AND page collection fields when applicable
   const fieldGroups = useMemo(() => {
-    const collectionVariable = parentCollectionLayer ? getCollectionVariable(parentCollectionLayer) : null;
-
-    // Check if parent is a multi-asset collection
-    const isMultiAssetParent = collectionVariable?.source_field_type === 'multi_asset';
-    const multiAssetContext = isMultiAssetParent && collectionVariable.source_field_id
-      ? {
-        sourceFieldId: collectionVariable.source_field_id,
-        source: (collectionVariable.source_field_source || 'collection') as 'page' | 'collection',
-      }
-      : null;
-
-    // Get all parent collection layers (closest first)
-    const parentCollectionLayers = allParentCollectionLayers
-      .map(layer => ({ layerId: layer.id, collectionId: getCollectionVariable(layer)?.id }))
-      .filter((item): item is { layerId: string; collectionId: string } => !!item.collectionId);
-
-    return buildFieldGroups({
-      parentCollectionLayers,
-      page: currentPage,
-      fieldsByCollectionId: fields,
-      collections,
-      multiAssetContext,
-    });
-  }, [parentCollectionLayer, allParentCollectionLayers, currentPage, fields, collections]);
+    if (!selectedLayerId) return undefined;
+    let layers: Layer[] = [];
+    if (editingComponentId) {
+      layers = componentDrafts[editingComponentId] || [];
+    } else if (currentPageId) {
+      const draft = draftsByPageId[currentPageId];
+      layers = draft ? draft.layers : [];
+    }
+    if (!layers.length) return undefined;
+    return buildFieldGroupsForLayer(selectedLayerId, layers, currentPage, fields, collections);
+  }, [selectedLayerId, editingComponentId, componentDrafts, currentPageId, draftsByPageId, currentPage, fields, collections]);
 
   // Get collection fields for the currently selected collection layer (for Sort By dropdown)
   const selectedCollectionFields = useMemo(() => {
@@ -1724,471 +1675,20 @@ const RightSidebar = React.memo(function RightSidebar({
   const isComponentInstance = !!selectedLayer.componentId;
   const component = isComponentInstance ? getComponentById(selectedLayer.componentId!) : null;
 
-  // If it's a component instance, show a message with edit button instead of design properties
-  // This works both when editing a page OR when editing a component (nested component instances)
+  // If it's a component instance, show component sidebar instead of design properties
   if (isComponentInstance && component) {
-    const handleEditMasterComponent = async () => {
-      const { loadComponentDraft, getComponentById } = useComponentsStore.getState();
-      const { setSelectedLayerId: setLayerId, pushComponentNavigation } = useEditorStore.getState();
-      const { pages } = usePagesStore.getState();
-
-      // Clear selection FIRST to release lock on current page's channel
-      // before switching to component's channel
-      setLayerId(null);
-
-      // Push current context to navigation stack before entering component edit mode
-      if (editingComponentId) {
-        // We're currently editing a component, push it to stack
-        const currentComponent = getComponentById(editingComponentId);
-        if (currentComponent) {
-          pushComponentNavigation({
-            type: 'component',
-            id: editingComponentId,
-            name: currentComponent.name,
-            layerId: selectedLayerId,
-          });
-        }
-      } else if (currentPageId) {
-        // We're on a page, push it to stack
-        const currentPage = pages.find((p) => p.id === currentPageId);
-        if (currentPage) {
-          pushComponentNavigation({
-            type: 'page',
-            id: currentPageId,
-            name: currentPage.name,
-            layerId: selectedLayerId,
-          });
-        }
-      }
-
-      // Load the component's layers into draft (async to ensure proper cache sync)
-      await loadComponentDraft(component.id);
-
-      // Open component (updates state + URL, changes lock channel)
-      openComponent(component.id, currentPageId, undefined, selectedLayerId);
-
-      // Select the first layer of the component (now on component channel)
-      if (component.layers && component.layers.length > 0) {
-        setLayerId(component.layers[0].id);
-      }
-    };
-
-    const allVariables = component.variables || [];
-    const textVariables = allVariables.filter(v => !v.type || v.type === 'text');
-    const imageVariables = allVariables.filter(v => v.type === 'image');
-    const linkVariables = allVariables.filter(v => v.type === 'link');
-    const audioVariables = allVariables.filter(v => v.type === 'audio');
-    const videoVariables = allVariables.filter(v => v.type === 'video');
-    const iconVariables = allVariables.filter(v => v.type === 'icon');
-    const currentTextOverrides = selectedLayer.componentOverrides?.text || {};
-    const currentImageOverrides = selectedLayer.componentOverrides?.image || {};
-    const currentLinkOverrides = selectedLayer.componentOverrides?.link || {};
-    const currentAudioOverrides = selectedLayer.componentOverrides?.audio || {};
-    const currentVideoOverrides = selectedLayer.componentOverrides?.video || {};
-    const currentIconOverrides = selectedLayer.componentOverrides?.icon || {};
-
-    // Extract Tiptap content from text ComponentVariableValue
-    // Falls back to variable's default_value if no override is set
-    const getOverrideValue = (variableId: string) => {
-      const overrideValue = currentTextOverrides[variableId];
-      const variableDef = textVariables.find(v => v.id === variableId);
-
-      // Use override if set, otherwise fall back to default value
-      const value = overrideValue ?? variableDef?.default_value;
-
-      // Extract Tiptap content using utility function
-      return extractTiptapFromComponentVariable(value);
-    };
-
-    // Get image override value (ImageSettingsValue)
-    const getImageOverrideValue = (variableId: string) => {
-      const overrideValue = currentImageOverrides[variableId];
-      const variableDef = imageVariables.find(v => v.id === variableId);
-
-      // Use override if set, otherwise fall back to default value
-      return (overrideValue ?? variableDef?.default_value) as ImageSettingsValue | undefined;
-    };
-
-    // Store override as text ComponentVariableValue (DynamicRichTextVariable)
-    const handleVariableOverrideChange = (variableId: string, tiptapContent: any) => {
-      // Store as DynamicRichTextVariable to preserve formatting
-      const variableValue = createTextComponentVariableValue(tiptapContent);
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          text: {
-            ...currentTextOverrides,
-            [variableId]: variableValue,
-          },
-        },
-      });
-    };
-
-    // Store image override as ImageSettingsValue
-    const handleImageVariableOverrideChange = (variableId: string, value: ImageSettingsValue) => {
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          image: {
-            ...currentImageOverrides,
-            [variableId]: value,
-          },
-        },
-      });
-    };
-
-    // Get link override value (LinkSettingsValue)
-    const getLinkOverrideValue = (variableId: string) => {
-      const overrideValue = currentLinkOverrides[variableId];
-      const variableDef = linkVariables.find(v => v.id === variableId);
-
-      // Use override if set, otherwise fall back to default value
-      return (overrideValue ?? variableDef?.default_value) as LinkSettingsValue | undefined;
-    };
-
-    // Store link override as LinkSettingsValue
-    const handleLinkVariableOverrideChange = (variableId: string, value: LinkSettingsValue) => {
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          link: {
-            ...currentLinkOverrides,
-            [variableId]: value,
-          },
-        },
-      });
-    };
-
-    // Get audio override value
-    const getAudioOverrideValue = (variableId: string) => {
-      const overrideValue = currentAudioOverrides[variableId];
-      const variableDef = audioVariables.find(v => v.id === variableId);
-      return (overrideValue ?? variableDef?.default_value) as AudioSettingsValue | undefined;
-    };
-
-    const handleAudioVariableOverrideChange = (variableId: string, value: AudioSettingsValue) => {
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          audio: {
-            ...currentAudioOverrides,
-            [variableId]: value,
-          },
-        },
-      });
-    };
-
-    // Get video override value
-    const getVideoOverrideValue = (variableId: string) => {
-      const overrideValue = currentVideoOverrides[variableId];
-      const variableDef = videoVariables.find(v => v.id === variableId);
-      return (overrideValue ?? variableDef?.default_value) as VideoSettingsValue | undefined;
-    };
-
-    const handleVideoVariableOverrideChange = (variableId: string, value: VideoSettingsValue) => {
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          video: {
-            ...currentVideoOverrides,
-            [variableId]: value,
-          },
-        },
-      });
-    };
-
-    // Get icon override value
-    const getIconOverrideValue = (variableId: string) => {
-      const overrideValue = currentIconOverrides[variableId];
-      const variableDef = iconVariables.find(v => v.id === variableId);
-      return (overrideValue ?? variableDef?.default_value) as IconSettingsValue | undefined;
-    };
-
-    const handleIconVariableOverrideChange = (variableId: string, value: IconSettingsValue) => {
-      onLayerUpdate(selectedLayerId!, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          icon: {
-            ...currentIconOverrides,
-            [variableId]: value,
-          },
-        },
-      });
-    };
-
-    // Handle detaching from component (converts instance to regular layers)
-    const handleDetachFromComponent = () => {
-      if (!selectedLayer.componentId) return;
-
-      // Use the shared utility function for detaching
-      const newLayers = detachSpecificLayerFromComponent(allLayers, selectedLayerId!, component || undefined);
-
-      if (editingComponentId) {
-        // We're editing a component, update component draft
-        updateComponentDraft(editingComponentId, newLayers);
-      } else if (currentPageId) {
-        // We're on a page, update page draft
-        setDraftLayers(currentPageId, newLayers);
-      }
-
-      // Clear selection after detaching
-      useEditorStore.getState().setSelectedLayerId(null);
-    };
-
-    // Handle resetting all overrides to defaults
-    const handleResetAllOverrides = () => {
-      if (!selectedLayerId) return;
-
-      onLayerUpdate(selectedLayerId, {
-        componentOverrides: {
-          ...selectedLayer.componentOverrides,
-          text: {},
-          image: {},
-          link: {},
-          audio: {},
-          video: {},
-          icon: {},
-        },
-      });
-    };
-
     return (
-      <div className="w-64 shrink-0 bg-background border-l flex flex-col p-4 pb-0 h-full overflow-hidden">
-        <Tabs value="" className="flex flex-col min-h-0 gap-0!">
-          <div>
-            <TabsList className="w-full">
-              <TabsTrigger value="design" disabled>Design</TabsTrigger>
-              <TabsTrigger value="settings" disabled>Settings</TabsTrigger>
-              <TabsTrigger value="interactions" disabled>Interactions</TabsTrigger>
-            </TabsList>
-          </div>
-
-          <hr className="mt-4" />
-
-          <div className="flex flex-col divide-y divide-border overflow-y-auto no-scrollbar">
-            <SettingsPanel
-              title="Component instance"
-              isOpen={true}
-              onToggle={() => {}}
-              action={
-                <div className="flex items-center gap-1">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="xs" variant="ghost">
-                        <Icon name="more" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={handleResetAllOverrides}
-                        disabled={Object.keys(currentTextOverrides).length === 0 && Object.keys(currentImageOverrides).length === 0 && Object.keys(currentLinkOverrides).length === 0 && Object.keys(currentAudioOverrides).length === 0 && Object.keys(currentVideoOverrides).length === 0 && Object.keys(currentIconOverrides).length === 0}
-                      >
-                        <Icon name="undo" />
-                        Reset all overrides
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={handleDetachFromComponent}>
-                        <Icon name="detach" />
-                        Detach from component
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              }
-            >
-              <div className="bg-purple-500/20 text-purple-700 dark:text-purple-300 pl-2 pr-3 h-10 rounded-lg flex items-center gap-2">
-                <div className="p-1.5 bg-current/20 rounded-xl">
-                  <Icon name="component" className="size-3" />
-                </div>
-                <span>{component.name}</span>
-                {(Object.keys(currentTextOverrides).length > 0 || Object.keys(currentImageOverrides).length > 0 || Object.keys(currentLinkOverrides).length > 0 || Object.keys(currentAudioOverrides).length > 0 || Object.keys(currentVideoOverrides).length > 0 || Object.keys(currentIconOverrides).length > 0) && (
-                    <span className="ml-auto text-[10px] italic text-orange-600 dark:text-orange-200">Overridden</span>
-                )}
-              </div>
-
-              <Button
-                size="sm" variant="secondary"
-                onClick={handleEditMasterComponent}
-              >
-                <Icon name="edit" />
-                Edit component
-              </Button>
-
-            </SettingsPanel>
-
-            <SettingsPanel
-              title="Variables"
-              isOpen={variablesOpen}
-              onToggle={() => setVariablesOpen(!variablesOpen)}
-            >
-              <div className="flex flex-col gap-6">
-                {/* Text variable overrides */}
-                {textVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {textVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2">
-                        <Label variant="muted" className="truncate">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2 *:w-full">
-                          <RichTextEditor
-                            value={getOverrideValue(variable.id)}
-                            onChange={(val) => handleVariableOverrideChange(variable.id, val)}
-                            placeholder="Enter value..."
-                            fieldGroups={fieldGroups}
-                            allFields={fields}
-                            collections={collections}
-                            withFormatting={true}
-                            showFormattingToolbar={false}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Image variable overrides */}
-                {imageVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {imageVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2 items-start">
-                        <Label variant="muted" className="truncate pt-2">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2">
-                          <ImageSettings
-                            mode="standalone"
-                            value={getImageOverrideValue(variable.id)}
-                            onChange={(val) => handleImageVariableOverrideChange(variable.id, val)}
-                            fieldGroups={fieldGroups}
-                            allFields={fields}
-                            collections={collections}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Link variable overrides */}
-                {linkVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {linkVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2 items-start">
-                        <Label variant="muted" className="truncate pt-2">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2">
-                          <LinkSettings
-                            mode="standalone"
-                            value={getLinkOverrideValue(variable.id)}
-                            onChange={(val) => handleLinkVariableOverrideChange(variable.id, val)}
-                            fieldGroups={fieldGroups}
-                            allFields={fields}
-                            collections={collections}
-                            isInsideCollectionLayer={!!parentCollectionLayer}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Audio variable overrides */}
-                {audioVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {audioVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2 items-start">
-                        <Label variant="muted" className="truncate pt-2">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2">
-                          <AudioSettings
-                            mode="standalone"
-                            value={getAudioOverrideValue(variable.id)}
-                            onChange={(val) => handleAudioVariableOverrideChange(variable.id, val)}
-                            fieldGroups={fieldGroups}
-                            allFields={fields}
-                            collections={collections}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Video variable overrides */}
-                {videoVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {videoVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2 items-start">
-                        <Label variant="muted" className="truncate pt-2">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2">
-                          <VideoSettings
-                            mode="standalone"
-                            value={getVideoOverrideValue(variable.id)}
-                            onChange={(val) => handleVideoVariableOverrideChange(variable.id, val)}
-                            fieldGroups={fieldGroups}
-                            allFields={fields}
-                            collections={collections}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Icon variable overrides */}
-                {iconVariables.length > 0 && (
-                  <div className="flex flex-col gap-3">
-                    {iconVariables.map((variable) => (
-                      <div key={variable.id} className="grid grid-cols-3 gap-2 items-start">
-                        <Label variant="muted" className="truncate pt-2">
-                          {variable.name}
-                        </Label>
-                        <div className="col-span-2">
-                          <IconSettings
-                            mode="standalone"
-                            value={getIconOverrideValue(variable.id)}
-                            onChange={(val) => handleIconVariableOverrideChange(variable.id, val)}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {allVariables.length === 0 && (
-                <div className="flex-1 flex items-center justify-center">
-                  <Empty>
-                    <EmptyMedia variant="icon">
-                      <Icon name="component" className="size-3.5" />
-                    </EmptyMedia>
-                    <EmptyTitle>No variables set</EmptyTitle>
-                    <EmptyDescription>
-                      Enter component editing mode to add variables.
-                    </EmptyDescription>
-                    <div>
-                      <Button
-                        onClick={handleEditMasterComponent}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        Edit component
-                      </Button>
-                    </div>
-                  </Empty>
-                </div>
-              )}
-
-            </SettingsPanel>
-
-          </div>
-
-        </Tabs>
-      </div>
+      <ComponentInstanceSidebar
+        selectedLayerId={selectedLayerId!}
+        selectedLayer={selectedLayer}
+        component={component}
+        onLayerUpdate={onLayerUpdate}
+        allLayers={allLayers}
+        fieldGroups={fieldGroups}
+        fields={fields}
+        collections={collections}
+        isInsideCollectionLayer={!!parentCollectionLayer}
+      />
     );
   }
 
@@ -2503,48 +2003,27 @@ const RightSidebar = React.memo(function RightSidebar({
                 >
                   <div className="grid grid-cols-3">
                     {!(isTextEditingOnCanvas && editingLayerIdOnCanvas === selectedLayerId) && (
-                      <div className="flex items-start gap-1 py-2">
-                        {editingComponentId ? (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="variable"
-                                size="xs"
-                                className="has-[>svg]:px-0 py-"
-                              >
-                                <Icon name="plus-circle-solid" />
-                                Content
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {componentVariables.length > 0 && (
-                                <DropdownMenuSub>
-                                  <DropdownMenuSubTrigger>Link to variable</DropdownMenuSubTrigger>
-                                  <DropdownMenuPortal>
-                                    <DropdownMenuSubContent>
-                                      {componentVariables.map((variable) => (
-                                        <DropdownMenuItem
-                                          key={variable.id}
-                                          onClick={() => handleLinkVariable(variable.id)}
-                                        >
-                                          {variable.name}
-                                          {linkedVariableId === variable.id && (
-                                            <Icon name="check" className="ml-auto size-3" />
-                                          )}
-                                        </DropdownMenuItem>
-                                      ))}
-                                    </DropdownMenuSubContent>
-                                  </DropdownMenuPortal>
-                                </DropdownMenuSub>
-                              )}
-                              <DropdownMenuItem onClick={() => openVariablesDialog()}>
-                                Manage variables
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : (
-                          <Label variant="muted">Content</Label>
-                        )}
+                      <div className="flex items-start gap-1 py-1">
+                        <ComponentVariableLabel
+                          label="Content"
+                          isEditingComponent={!!editingComponentId}
+                          variables={componentVariables}
+                          linkedVariableId={linkedVariableId}
+                          onLinkVariable={handleLinkVariable}
+                          onManageVariables={() => openVariablesDialog()}
+                          onCreateVariable={editingComponentId ? async () => {
+                            const contentValue = getContentValue(selectedLayer);
+                            const newId = await addTextVariable(editingComponentId, 'Text');
+                            if (newId) {
+                              await updateTextVariable(editingComponentId, newId, {
+                                default_value: createTextComponentVariableValue(contentValue),
+                              });
+                              handleLinkVariable(newId);
+                              openVariablesDialog(newId);
+                            }
+                          } : undefined}
+                          className="py-1"
+                        />
                       </div>
                     )}
 
@@ -2557,7 +2036,10 @@ const RightSidebar = React.memo(function RightSidebar({
                           onClick={() => openVariablesDialog(linkedVariable.id)}
                         >
                           <div>
-                            <span>{linkedVariable.name}</span>
+                            <span className="flex items-center gap-1.5">
+                              <Icon name={VARIABLE_TYPE_ICONS[linkedVariable.type || 'text']} className="size-3 opacity-60" />
+                              {linkedVariable.name}
+                            </span>
                             <Button
                               className="size-4! p-0!"
                               variant="outline"
@@ -2574,15 +2056,15 @@ const RightSidebar = React.memo(function RightSidebar({
                           <EmptyDescription>You are editing the text directly on canvas.</EmptyDescription>
                         </Empty>
                       ) : (
-                        <RichTextEditor
+                        <ExpandableRichTextEditor
+                          key={selectedLayerId}
                           value={getContentValue(selectedLayer)}
                           onChange={handleContentChange}
                           placeholder="Enter text..."
+                          sheetDescription="Element content"
                           fieldGroups={fieldGroups}
                           allFields={fields}
                           collections={collections}
-                          withFormatting={true}
-                          showFormattingToolbar={false}
                           disabled={showTextStyleControls}
                         />
                       )}

@@ -137,6 +137,13 @@ function CanvasContent({
 }: CanvasContentProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Seed ancestor set with the component being edited so its own rich-text
+  // collection data cannot re-embed itself (prevents infinite loops)
+  const initialAncestorIds = useMemo(
+    () => editingComponentId ? new Set([editingComponentId]) : undefined,
+    [editingComponentId]
+  );
+
   // Handle click on canvas body (select body when clicking on empty space)
   const handleBodyClick = (event: React.MouseEvent) => {
     // Only select body if clicking directly on it (not on a child layer)
@@ -194,6 +201,7 @@ function CanvasContent({
         editingComponentVariables={editingComponentVariables}
         editorHiddenLayerIds={editorHiddenLayerIds}
         editorBreakpoint={editorBreakpoint}
+        ancestorComponentIds={initialAncestorIds}
       />
     </div>
   );
@@ -252,8 +260,8 @@ export default function Canvas({
 
   // Resolve component instances in layers
   const { layers: resolvedLayers, componentMap } = useMemo(() => {
-    return serializeLayers(layers, components);
-  }, [layers, components]);
+    return serializeLayers(layers, components, editingComponentVariables);
+  }, [layers, components, editingComponentVariables]);
 
   // Collect layer IDs that should be hidden on canvas (display: hidden with on-load)
   const editorHiddenLayerIds = useMemo(() => {

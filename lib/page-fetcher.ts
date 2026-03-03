@@ -2,11 +2,11 @@ import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { buildSlugPath, buildDynamicPageUrl, buildLocalizedSlugPath, buildLocalizedDynamicPageUrl, detectLocaleFromPath, matchPageWithTranslatedSlugs, matchDynamicPageWithTranslatedSlugs } from '@/lib/page-utils';
 import { getItemWithValues, getItemsWithValues } from '@/lib/repositories/collectionItemRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
-import type { Page, PageFolder, PageLayers, Component, CollectionItemWithValues, CollectionField, Layer, CollectionPaginationMeta, Translation, Locale } from '@/types';
+import type { Page, PageFolder, PageLayers, Component, ComponentVariable, CollectionItemWithValues, CollectionField, Layer, CollectionPaginationMeta, Translation, Locale } from '@/types';
 import { getCollectionVariable, resolveFieldValue, evaluateVisibility } from '@/lib/layer-utils';
 import { isFieldVariable, isAssetVariable, createDynamicTextVariable, createDynamicRichTextVariable, createAssetVariable, getDynamicTextContent, getVariableStringValue, getAssetId, resolveDesignStyles } from '@/lib/variable-utils';
-import { generateImageSrcset, getImageSizes, getOptimizedImageUrl, getAssetProxyUrl, DEFAULT_ASSETS } from '@/lib/asset-utils';
-import { resolveComponents } from '@/lib/resolve-components';
+import { generateImageSrcset, getImageSizes, getOptimizedImageUrl, getAssetProxyUrl, DEFAULT_ASSETS, collectLayerAssetIds } from '@/lib/asset-utils';
+import { resolveComponents, applyComponentOverrides } from '@/lib/resolve-components';
 import { extractInlineNodesFromRichText, isTiptapDoc, hasBlockElementsWithResolver } from '@/lib/tiptap-utils';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
 
@@ -319,7 +319,7 @@ export async function fetchPageByPath(
         }
 
         // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
-        const resolved = await resolveAllAssets(processedLayers, isPublished);
+        const resolved = await resolveAllAssets(processedLayers, isPublished, components);
         processedLayers = resolved.layers;
 
         return {
@@ -328,7 +328,7 @@ export async function fetchPageByPath(
             ...homepageData.pageLayers,
             layers: processedLayers,
           },
-          components: [],  // Components already resolved into layers
+          components: homepageData.components, // Layers are pre-resolved; components passed for rich-text embedded rendering
           locale: detectedLocale,
           availableLocales: availableLocales as Locale[] || [],
           translations,
@@ -459,13 +459,16 @@ export async function fetchPageByPath(
               ? await resolveCollectionLayers(layersWithInjectedData, isPublished, enhancedItemValues, paginationContext, translations)
               : [];
 
+            // Resolve collections inside rich text embedded components
+            resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished, translations);
+
             // Apply translations (components already resolved above)
             if (detectedLocale && translations && Object.keys(translations).length > 0) {
               resolvedLayers = injectTranslatedText(resolvedLayers, matchingPage.id, translations);
             }
 
             // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
-            const resolved = await resolveAllAssets(resolvedLayers, isPublished);
+            const resolved = await resolveAllAssets(resolvedLayers, isPublished, components);
             resolvedLayers = resolved.layers;
 
             return {
@@ -474,7 +477,7 @@ export async function fetchPageByPath(
                 ...pageLayers,
                 layers: resolvedLayers,
               },
-              components: [],  // Components already resolved into layers
+              components, // Layers are pre-resolved; components passed for rich-text embedded rendering
               collectionItem: enhancedCollectionItem, // Include enhanced collection item for dynamic pages
               collectionFields, // Include collection fields for resolving placeholders
               locale: detectedLocale,
@@ -515,13 +518,16 @@ export async function fetchPageByPath(
       ? await resolveCollectionLayers(layersWithComponents, isPublished, undefined, paginationContext, translations)
       : [];
 
+    // Resolve collections inside rich text embedded components
+    resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished, translations);
+
     // Apply translations (components already resolved above)
     if (detectedLocale && translations && Object.keys(translations).length > 0) {
       resolvedLayers = injectTranslatedText(resolvedLayers, matchingPage.id, translations);
     }
 
     // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
-    const resolved = await resolveAllAssets(resolvedLayers, isPublished);
+    const resolved = await resolveAllAssets(resolvedLayers, isPublished, components);
     resolvedLayers = resolved.layers;
 
     return {
@@ -530,7 +536,7 @@ export async function fetchPageByPath(
         ...pageLayers,
         layers: resolvedLayers,
       },
-      components: [],  // Components already resolved into layers
+      components, // Layers are pre-resolved; components passed for rich-text embedded rendering
       locale: detectedLocale,
       availableLocales: availableLocales as Locale[] || [],
       translations,
@@ -605,8 +611,11 @@ export async function fetchErrorPage(
       ? await resolveCollectionLayers(layersWithComponents, isPublished, undefined, undefined, undefined)
       : [];
 
+    // Resolve collections inside rich text embedded components
+    resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished);
+
     // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
-    const resolved = await resolveAllAssets(resolvedLayers, isPublished);
+    const resolved = await resolveAllAssets(resolvedLayers, isPublished, components);
     resolvedLayers = resolved.layers;
 
     return {
@@ -615,7 +624,7 @@ export async function fetchErrorPage(
         ...pageLayers,
         layers: resolvedLayers,
       },
-      components: [], // Components already resolved into layers
+      components, // Layers are pre-resolved; components passed for rich-text embedded rendering
       locale: null, // Error pages don't have locale context
       availableLocales: availableLocales as Locale[] || [],
       translations: {}, // Error pages don't have translations
@@ -638,7 +647,7 @@ export async function fetchHomepage(
   paginationContext?: PaginationContext,
   preloadedComponents?: Component[],
   tenantId?: string
-): Promise<Pick<PageData, 'page' | 'pageLayers' | 'locale' | 'availableLocales' | 'translations'> | null> {
+): Promise<Pick<PageData, 'page' | 'pageLayers' | 'components' | 'locale' | 'availableLocales' | 'translations'> | null> {
   try {
     const supabase = await getSupabaseAdmin(tenantId);
 
@@ -694,8 +703,11 @@ export async function fetchHomepage(
       ? await resolveCollectionLayers(layersWithComponents, isPublished, undefined, paginationContext, undefined)
       : [];
 
+    // Resolve collections inside rich text embedded components
+    resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished);
+
     // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
-    const resolved = await resolveAllAssets(resolvedLayers, isPublished);
+    const resolved = await resolveAllAssets(resolvedLayers, isPublished, components);
     resolvedLayers = resolved.layers;
 
     return {
@@ -704,6 +716,7 @@ export async function fetchHomepage(
         ...pageLayers,
         layers: resolvedLayers,
       },
+      components, // Layers are pre-resolved; components passed for rich-text embedded rendering
       locale: null, // Homepage accessed without locale prefix
       availableLocales: availableLocales as Locale[] || [],
       translations: {}, // Homepage accessed without locale prefix
@@ -1374,6 +1387,129 @@ function remapLayerIdsForCollectionItem(layer: Layer, suffix: string): Layer {
   };
 
   return remapLayer(layer);
+}
+
+/**
+ * Walk Tiptap JSON nodes, resolve collections inside richTextComponent nodes,
+ * and store the result as `_resolvedLayers` so the renderer can use them directly.
+ * Tracks ancestor component IDs to prevent infinite circular resolution.
+ */
+async function resolveTiptapComponentCollections(
+  content: any,
+  components: Component[],
+  isPublished: boolean,
+  translations?: Record<string, Translation>,
+  ancestorComponentIds?: Set<string>,
+): Promise<any> {
+  if (!content || typeof content !== 'object') return content;
+
+  if (Array.isArray(content)) {
+    let changed = false;
+    const result = await Promise.all(
+      content.map(async (node: any) => {
+        const resolved = await resolveTiptapComponentCollections(node, components, isPublished, translations, ancestorComponentIds);
+        if (resolved !== node) changed = true;
+        return resolved;
+      })
+    );
+    return changed ? result : content;
+  }
+
+  let nodeChanged = false;
+  let node = content;
+
+  // Resolve richTextComponent nodes
+  if (node.type === 'richTextComponent' && node.attrs?.componentId) {
+    const componentId = node.attrs.componentId as string;
+
+    // Prevent circular resolution (component embedding itself)
+    if (!ancestorComponentIds?.has(componentId)) {
+      const comp = components.find(c => c.id === componentId);
+      if (comp?.layers?.length) {
+        const childAncestors = new Set(ancestorComponentIds);
+        childAncestors.add(componentId);
+
+        const overrides = node.attrs.componentOverrides ?? undefined;
+        const withOverrides = applyComponentOverrides(comp.layers, overrides, comp.variables);
+        const withComponents = resolveComponents(withOverrides, components, comp.variables, overrides);
+        const withCollections = await resolveCollectionLayers(withComponents, isPublished, undefined, undefined, translations);
+
+        // Recursively resolve rich text components inside the resolved layers
+        // (handles Component A → rich text → Component B → collection)
+        const fullyResolved = await resolveRichTextCollections(
+          withCollections, components, isPublished, translations, childAncestors,
+        );
+
+        node = {
+          ...node,
+          attrs: { ...node.attrs, _resolvedLayers: fullyResolved },
+        };
+        nodeChanged = true;
+      }
+    }
+  }
+
+  // Recurse into content array
+  if (Array.isArray(node.content)) {
+    const resolvedContent = await resolveTiptapComponentCollections(node.content, components, isPublished, translations, ancestorComponentIds);
+    if (resolvedContent !== node.content) {
+      node = { ...node, content: resolvedContent };
+      nodeChanged = true;
+    }
+  }
+
+  return nodeChanged ? node : content;
+}
+
+/**
+ * Pre-resolve collections inside rich text embedded components.
+ * Walks all layers, finds dynamic_rich_text variables with richTextComponent nodes,
+ * and resolves their collection layers server-side.
+ * Tracks ancestor component IDs to prevent infinite circular resolution.
+ */
+export async function resolveRichTextCollections(
+  layers: Layer[],
+  components: Component[],
+  isPublished: boolean,
+  translations?: Record<string, Translation>,
+  ancestorComponentIds?: Set<string>,
+): Promise<Layer[]> {
+  if (!components.length) return layers;
+
+  const resolveLayer = async (layer: Layer): Promise<Layer> => {
+    let updated = layer;
+
+    // Check if this layer has rich text with potential embedded components
+    const textVar = layer.variables?.text;
+    if (textVar?.type === 'dynamic_rich_text' && textVar.data?.content) {
+      const resolved = await resolveTiptapComponentCollections(
+        textVar.data.content, components, isPublished, translations, ancestorComponentIds,
+      );
+      if (resolved !== textVar.data.content) {
+        updated = {
+          ...updated,
+          variables: {
+            ...updated.variables,
+            text: { type: 'dynamic_rich_text', data: { content: resolved } },
+          },
+        };
+      }
+    }
+
+    // Recurse into children
+    if (updated.children?.length) {
+      const resolvedChildren = await Promise.all(
+        updated.children.map(child => resolveLayer(child))
+      );
+      if (resolvedChildren.some((c, i) => c !== updated.children![i])) {
+        updated = { ...updated, children: resolvedChildren };
+      }
+    }
+
+    return updated;
+  };
+
+  return Promise.all(layers.map(resolveLayer));
 }
 
 export async function resolveCollectionLayers(
@@ -2298,7 +2434,7 @@ export async function renderCollectionItemsToHtml(
       // Convert layers to HTML (handles fragments from resolved collections)
       const itemHtml = resolvedLayers
         .map((layer) =>
-          layerToHtml(layer, item.id, pages, folders, collectionItemSlugs, locale, translations, anchorMap, item.values, undefined, assetMap, undefined)
+          layerToHtml(layer, item.id, pages, folders, collectionItemSlugs, locale, translations, anchorMap, item.values, undefined, assetMap, undefined, undefined)
         )
         .join('');
 
@@ -2480,62 +2616,17 @@ async function injectCollectionDataForHtml(
  * This ensures assets are resolved server-side before rendering
  * Should be called after all other layer processing (collections, components, etc.)
  * @param isPublished - Whether to fetch published (true) or draft (false) assets
+ * @param components - Available components, needed to resolve assets from rich-text embedded components
  */
-async function resolveAllAssets(layers: Layer[], isPublished: boolean = true): Promise<{ layers: Layer[]; assetMap: Record<string, { public_url: string | null }> }> {
+async function resolveAllAssets(
+  layers: Layer[],
+  isPublished: boolean = true,
+  components?: Component[],
+): Promise<{ layers: Layer[]; assetMap: Record<string, { public_url: string | null; content?: string | null }> }> {
   const { getAssetsByIds } = await import('@/lib/repositories/assetRepository');
 
   // Step 1: Collect all asset IDs from the layer tree
-  const collectAssetIds = (layer: Layer, assetIds: Set<string>): void => {
-    // Collect image asset IDs
-    const imageSrc = layer.variables?.image?.src;
-    if (imageSrc && isAssetVariable(imageSrc)) {
-      const assetId = getAssetId(imageSrc);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Collect video asset IDs
-    const videoSrc = layer.variables?.video?.src;
-    if (videoSrc && isAssetVariable(videoSrc)) {
-      const assetId = getAssetId(videoSrc);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Collect video poster asset IDs
-    const videoPoster = layer.variables?.video?.poster;
-    if (videoPoster && isAssetVariable(videoPoster)) {
-      const assetId = getAssetId(videoPoster);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Collect audio asset IDs
-    const audioSrc = layer.variables?.audio?.src;
-    if (audioSrc && isAssetVariable(audioSrc)) {
-      const assetId = getAssetId(audioSrc);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Collect icon asset IDs
-    const iconSrc = layer.variables?.icon?.src;
-    if (iconSrc && isAssetVariable(iconSrc)) {
-      const assetId = getAssetId(iconSrc);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Collect background image asset IDs
-    const bgImageSrc = layer.variables?.backgroundImage?.src;
-    if (bgImageSrc && isAssetVariable(bgImageSrc)) {
-      const assetId = getAssetId(bgImageSrc);
-      if (assetId) assetIds.add(assetId);
-    }
-
-    // Recursively collect from children
-    if (layer.children) {
-      layer.children.forEach(child => collectAssetIds(child, assetIds));
-    }
-  };
-
-  const assetIds = new Set<string>();
-  layers.forEach(layer => collectAssetIds(layer, assetIds));
+  const assetIds = collectLayerAssetIds(layers, components || []);
 
   // Step 2: Fetch all assets in a single query
   const assetMap = await getAssetsByIds(Array.from(assetIds), isPublished);
@@ -2549,135 +2640,107 @@ async function resolveAllAssets(layers: Layer[], isPublished: boolean = true): P
   }
 
   // Step 3: Resolve layer URLs using the fetched asset map
-  const resolveLayer = (layer: Layer): Layer => {
-    const updates: Partial<Layer> = {};
-    const variableUpdates: Partial<Layer['variables']> = {};
+  return { layers: layers.map(l => resolveLayerAssets(l, assetMap)), assetMap };
+}
 
-    // Resolve AssetVariable in image src
-    const imageSrc = layer.variables?.image?.src;
-    if (imageSrc && isAssetVariable(imageSrc)) {
-      const assetId = getAssetId(imageSrc);
-      if (assetId) {
-        const asset = assetMap[assetId];
-        // Use public_url if available, otherwise convert inline content to data URL
-        let resolvedUrl = '';
-        if (asset?.public_url) {
-          resolvedUrl = asset.public_url;
-        } else if (asset?.content) {
-          // Convert inline SVG content to data URL
-          resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
-        }
-        variableUpdates.image = {
-          src: createDynamicTextVariable(resolvedUrl),
-          alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
-        };
-      }
-    }
+/**
+ * Synchronously resolve AssetVariables on a layer tree using an already-fetched assetMap.
+ * Replaces AssetVariable refs with DynamicTextVariable containing the resolved URL.
+ * Used by resolveAllAssets (upfront) and the componentRenderer in layerToHtml (at render time).
+ */
+function resolveLayerAssets(
+  layer: Layer,
+  assetMap: Record<string, { public_url: string | null; content?: string | null }>,
+): Layer {
+  const variableUpdates: Partial<Layer['variables']> = {};
 
-    // Resolve AssetVariable in video src and poster
-    const videoSrc = layer.variables?.video?.src;
-    const videoPoster = layer.variables?.video?.poster;
-    const videoUpdates: { src?: any; poster?: any } = {};
-
-    if (videoSrc && isAssetVariable(videoSrc)) {
-      const assetId = getAssetId(videoSrc);
-      if (assetId) {
-        const asset = assetMap[assetId];
-        const resolvedUrl = asset?.public_url || '';
-        videoUpdates.src = createDynamicTextVariable(resolvedUrl);
-      }
-    }
-
-    if (videoPoster && isAssetVariable(videoPoster)) {
-      const assetId = getAssetId(videoPoster);
-      if (assetId) {
-        const asset = assetMap[assetId];
-        const resolvedUrl = asset?.public_url || '';
-        videoUpdates.poster = createDynamicTextVariable(resolvedUrl);
-      }
-    }
-
-    if (Object.keys(videoUpdates).length > 0) {
-      variableUpdates.video = {
-        ...layer.variables?.video,
-        ...videoUpdates,
-      };
-    }
-
-    // Resolve AssetVariable in audio src
-    const audioSrc = layer.variables?.audio?.src;
-    if (audioSrc && isAssetVariable(audioSrc)) {
-      const assetId = getAssetId(audioSrc);
-      if (assetId) {
-        const asset = assetMap[assetId];
-        const resolvedUrl = asset?.public_url || '';
-        variableUpdates.audio = {
-          src: createDynamicTextVariable(resolvedUrl),
-        };
-      }
-    }
-
-    // Resolve AssetVariable in background image src
-    const bgImageSrc = layer.variables?.backgroundImage?.src;
-    if (bgImageSrc && isAssetVariable(bgImageSrc)) {
-      const assetId = getAssetId(bgImageSrc);
+  const imageSrc = layer.variables?.image?.src;
+  if (imageSrc && isAssetVariable(imageSrc)) {
+    const assetId = getAssetId(imageSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
       let resolvedUrl = '';
-      if (assetId) {
-        const asset = assetMap[assetId];
-        if (asset?.public_url) {
-          resolvedUrl = asset.public_url;
-        } else if (asset?.content) {
-          resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
-        }
-      } else {
-        resolvedUrl = DEFAULT_ASSETS.IMAGE;
+      if (asset?.public_url) {
+        resolvedUrl = asset.public_url;
+      } else if (asset?.content) {
+        resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
       }
-      if (resolvedUrl) {
-        variableUpdates.backgroundImage = {
-          src: createDynamicTextVariable(resolvedUrl),
-        };
-      }
-    }
-
-    // Resolve AssetVariable in icon src (convert to StaticTextVariable with SVG content)
-    const iconSrc = layer.variables?.icon?.src;
-    if (iconSrc && isAssetVariable(iconSrc)) {
-      const assetId = getAssetId(iconSrc);
-      if (assetId) {
-        const asset = assetMap[assetId];
-        const svgContent = asset?.content || '';
-        variableUpdates.icon = {
-          src: {
-            type: 'static_text' as const,
-            data: {
-              content: svgContent,
-            },
-          },
-        };
-      }
-    }
-
-    // Apply all variable updates at once
-    if (Object.keys(variableUpdates).length > 0) {
-      updates.variables = {
-        ...layer.variables,
-        ...variableUpdates,
+      variableUpdates.image = {
+        src: createDynamicTextVariable(resolvedUrl),
+        alt: layer.variables?.image?.alt || createDynamicTextVariable(''),
       };
     }
+  }
 
-    // Recursively resolve children
-    if (layer.children) {
-      const resolvedChildren = layer.children.map(child => resolveLayer(child));
-      updates.children = resolvedChildren;
+  const videoSrc = layer.variables?.video?.src;
+  const videoPoster = layer.variables?.video?.poster;
+  const videoUpdates: { src?: any; poster?: any } = {};
+  if (videoSrc && isAssetVariable(videoSrc)) {
+    const assetId = getAssetId(videoSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      videoUpdates.src = createDynamicTextVariable(asset?.public_url || '');
     }
+  }
+  if (videoPoster && isAssetVariable(videoPoster)) {
+    const assetId = getAssetId(videoPoster);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      videoUpdates.poster = createDynamicTextVariable(asset?.public_url || '');
+    }
+  }
+  if (Object.keys(videoUpdates).length > 0) {
+    variableUpdates.video = { ...layer.variables?.video, ...videoUpdates };
+  }
 
-    return {
-      ...layer,
-      ...updates,
-    };
-  };
+  const audioSrc = layer.variables?.audio?.src;
+  if (audioSrc && isAssetVariable(audioSrc)) {
+    const assetId = getAssetId(audioSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      variableUpdates.audio = { src: createDynamicTextVariable(asset?.public_url || '') };
+    }
+  }
 
-  return { layers: layers.map(resolveLayer), assetMap };
+  const bgImageSrc = layer.variables?.backgroundImage?.src;
+  if (bgImageSrc && isAssetVariable(bgImageSrc)) {
+    const assetId = getAssetId(bgImageSrc);
+    let resolvedUrl = '';
+    if (assetId) {
+      const asset = assetMap[assetId];
+      if (asset?.public_url) {
+        resolvedUrl = asset.public_url;
+      } else if (asset?.content) {
+        resolvedUrl = `data:image/svg+xml,${encodeURIComponent(asset.content)}`;
+      }
+    } else {
+      resolvedUrl = DEFAULT_ASSETS.IMAGE;
+    }
+    if (resolvedUrl) {
+      variableUpdates.backgroundImage = { src: createDynamicTextVariable(resolvedUrl) };
+    }
+  }
+
+  const iconSrc = layer.variables?.icon?.src;
+  if (iconSrc && isAssetVariable(iconSrc)) {
+    const assetId = getAssetId(iconSrc);
+    if (assetId) {
+      const asset = assetMap[assetId];
+      variableUpdates.icon = {
+        src: { type: 'static_text' as const, data: { content: asset?.content || '' } },
+      };
+    }
+  }
+
+  const updates: Partial<Layer> = {};
+  if (Object.keys(variableUpdates).length > 0) {
+    updates.variables = { ...layer.variables, ...variableUpdates };
+  }
+  if (layer.children) {
+    updates.children = layer.children.map(child => resolveLayerAssets(child, assetMap));
+  }
+
+  return Object.keys(updates).length > 0 ? { ...layer, ...updates } : layer;
 }
 
 /**
@@ -2705,7 +2768,23 @@ function buildAnchorMap(layers: Layer[]): Record<string, string> {
  * Render Tiptap JSON content to HTML string
  * Handles text nodes, marks (bold, italic, etc.), and paragraphs
  */
-function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): string {
+/**
+ * Callback for rendering an embedded component inside rich-text to HTML.
+ * @param componentId - The component ID
+ * @param overrides - Component variable overrides
+ * @returns HTML string of the rendered component
+ */
+type RenderComponentHtmlFn = (
+  componentId: string,
+  overrides: Layer['componentOverrides'],
+  preResolvedLayers?: Layer[],
+) => string;
+
+function renderTiptapToHtml(
+  content: any,
+  textStyles?: Record<string, any>,
+  renderComponentHtml?: RenderComponentHtmlFn,
+): string {
   if (!content || typeof content !== 'object') {
     return '';
   }
@@ -2777,7 +2856,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
     const paragraphClass = mergedStyles?.paragraph?.classes || '';
     // Empty paragraphs use non-breaking space to preserve the empty line
     const innerHtml = content.content && content.content.length > 0
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
       : '\u00A0';
     // Wrap in span with paragraph styles for proper block display
     return `<span class="${escapeHtml(paragraphClass)}">${innerHtml}</span>`;
@@ -2791,7 +2870,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
     const headingClass = mergedStyles?.[styleKey]?.classes || '';
     // Empty headings use non-breaking space to preserve the empty line
     const innerHtml = content.content && content.content.length > 0
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
       : '\u00A0';
     // Use span to avoid nesting issues (h1 inside p is invalid)
     return `<span class="${escapeHtml(headingClass)}">${innerHtml}</span>`;
@@ -2799,7 +2878,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
 
   // Handle doc (root)
   if (content.type === 'doc' && Array.isArray(content.content)) {
-    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles)).join('');
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('');
   }
 
   // Handle bullet list
@@ -2807,7 +2886,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
     const listClass = textStyles?.bulletList?.classes || '';
     const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
     const items = content.content
-      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles)).join('')
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml)).join('')
       : '';
     return `<ul${classAttr}>${items}</ul>`;
   }
@@ -2817,7 +2896,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
     const listClass = textStyles?.orderedList?.classes || '';
     const classAttr = listClass ? ` class="${escapeHtml(listClass)}"` : '';
     const items = content.content
-      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles)).join('')
+      ? content.content.map((item: any) => renderTiptapToHtml(item, textStyles, renderComponentHtml)).join('')
       : '';
     return `<ol${classAttr}>${items}</ol>`;
   }
@@ -2825,7 +2904,7 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
   // Handle list item
   if (content.type === 'listItem') {
     const innerHtml = content.content
-      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles)).join('')
+      ? content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('')
       : '';
     return `<li>${innerHtml}</li>`;
   }
@@ -2835,9 +2914,21 @@ function renderTiptapToHtml(content: any, textStyles?: Record<string, any>): str
     return '<br>';
   }
 
+  // Handle embedded component blocks
+  if (content.type === 'richTextComponent' && content.attrs?.componentId) {
+    if (renderComponentHtml) {
+      return renderComponentHtml(
+        content.attrs.componentId,
+        content.attrs.componentOverrides ?? undefined,
+        content.attrs._resolvedLayers,
+      );
+    }
+    return `<div data-component-id="${escapeHtml(content.attrs.componentId)}"></div>`;
+  }
+
   // Fallback: recursively process content
   if (Array.isArray(content.content)) {
-    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles)).join('');
+    return content.content.map((node: any) => renderTiptapToHtml(node, textStyles, renderComponentHtml)).join('');
   }
 
   return '';
@@ -2858,15 +2949,17 @@ function layerToHtml(
   anchorMap?: Record<string, string>,
   collectionItemData?: Record<string, string>,
   pageCollectionItemData?: Record<string, string>,
-  assetMap?: Record<string, { public_url: string | null }>,
-  layerDataMap?: Record<string, Record<string, string>>
+  assetMap?: Record<string, { public_url: string | null; content?: string | null }>,
+  layerDataMap?: Record<string, Record<string, string>>,
+  components?: Component[],
+  ancestorComponentIds?: Set<string>,
 ): string {
   // Handle fragment layers (created by resolveCollectionLayers for nested collections)
   // Fragments render their children directly without a wrapper element
   if (layer.name === '_fragment' && layer.children) {
     return layer.children
       .map((child) =>
-        layerToHtml(child, collectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, collectionItemData, pageCollectionItemData, assetMap, layerDataMap)
+        layerToHtml(child, collectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, collectionItemData, pageCollectionItemData, assetMap, layerDataMap, components, ancestorComponentIds)
       )
       .join('');
   }
@@ -3019,7 +3112,7 @@ function layerToHtml(
       const childrenHtml = layer.children
         ? layer.children
           .map((child) =>
-            layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap)
+            layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, ancestorComponentIds)
           )
           .join('')
         : '';
@@ -3265,7 +3358,7 @@ function layerToHtml(
   const childrenHtml = layer.children
     ? layer.children
       .map((child) =>
-        layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap)
+        layerToHtml(child, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, ancestorComponentIds)
       )
       .join('')
     : '';
@@ -3279,8 +3372,29 @@ function layerToHtml(
     if (textVariable.type === 'dynamic_text') {
       textContent = textVariable.data.content || '';
     } else if (textVariable.type === 'dynamic_rich_text') {
-      // Render Tiptap JSON to HTML
-      textContent = renderTiptapToHtml(textVariable.data.content, layer.textStyles);
+      // Build component renderer with circular reference prevention
+      const componentRenderer: RenderComponentHtmlFn | undefined = components?.length
+        ? (componentId, overrides, preResolvedLayers) => {
+          if (ancestorComponentIds?.has(componentId)) return '';
+          const comp = components.find(c => c.id === componentId);
+          if (!comp?.layers?.length) return '';
+          const childAncestors = new Set(ancestorComponentIds);
+          childAncestors.add(componentId);
+          // Use pre-resolved layers (with collections) when available from resolveRichTextCollections
+          const resolved = preResolvedLayers
+            ?? resolveComponents(
+              applyComponentOverrides(comp.layers, overrides, comp.variables),
+              components, comp.variables, overrides,
+            );
+          const withAssets = assetMap
+            ? resolved.map(l => resolveLayerAssets(l, assetMap))
+            : resolved;
+          return withAssets
+            .map(l => layerToHtml(l, effectiveCollectionItemId, pages, folders, collectionItemSlugs, locale, translations, anchorMap, effectiveCollectionItemData, pageCollectionItemData, assetMap, effectiveLayerDataMap, components, childAncestors))
+            .join('');
+        }
+        : undefined;
+      textContent = renderTiptapToHtml(textVariable.data.content, layer.textStyles, componentRenderer);
       isRichText = true;
     }
   }

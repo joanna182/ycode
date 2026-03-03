@@ -307,6 +307,7 @@ export interface Layer {
     audio?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (audio)
     video?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (video)
     icon?: Record<string, ComponentVariableValue>; // ComponentVariable.id → override value (icon)
+    variableLinks?: Record<string, string>; // childVariableId → parentVariableId (pass-through from nested component to parent)
   };
 
   // Layer variables (layer collection data & dynamic data for texts, assets, links)
@@ -492,6 +493,7 @@ export interface ComponentVariable {
   id: string;        // Unique variable ID
   name: string;      // Display name (e.g., "Button title")
   type?: 'text' | 'image' | 'link' | 'audio' | 'video' | 'icon'; // Variable type (defaults to 'text' for backwards compatibility)
+  placeholder?: string; // Placeholder text shown in text override inputs
   default_value?: ComponentVariableValue; // Default value
 }
 
