@@ -48,6 +48,7 @@ import FilterSettings from './FilterSettings';
 import AlertSettings from './AlertSettings';
 import HTMLEmbedSettings from './HTMLEmbedSettings';
 import SliderSettings from './SliderSettings';
+import LightboxSettings from './LightboxSettings';
 import InputSettings from './InputSettings';
 import SelectOptionsSettings from './SelectOptionsSettings';
 import LabelSettings from './LabelSettings';
@@ -279,6 +280,7 @@ const RightSidebar = React.memo(function RightSidebar({
     let current = findLayerWithParent(allLayers, selectedLayerId)?.parent ?? null;
     while (current) {
       if (current.name === 'button') return true;
+      if (current.name === 'lightbox') return true;
       if (current.name === 'form' && selectedLayer.name === 'button') return true;
       const parentResult = findLayerWithParent(allLayers, current.id);
       current = parentResult?.parent ?? null;
@@ -2076,7 +2078,7 @@ const RightSidebar = React.memo(function RightSidebar({
             })()}
 
             {/* Link Settings - hide for form-related layers, buttons inside forms, and layers inside buttons */}
-            {selectedLayer && !['form', 'select', 'input', 'textarea', 'checkbox', 'radio', 'label'].includes(selectedLayer.name) && selectedLayer.settings?.tag !== 'label' && !shouldHideLinkSettings && (
+            {selectedLayer && !['form', 'select', 'input', 'textarea', 'checkbox', 'radio', 'label', 'lightbox'].includes(selectedLayer.name) && selectedLayer.settings?.tag !== 'label' && !shouldHideLinkSettings && (
               <LinkSettings
                 layer={selectedLayer}
                 onLayerUpdate={handleLayerUpdate}
@@ -2565,6 +2567,14 @@ const RightSidebar = React.memo(function RightSidebar({
               layer={selectedLayer}
               onLayerUpdate={handleLayerUpdate}
               allLayers={allLayers}
+            />
+
+            <LightboxSettings
+              layer={selectedLayer}
+              onLayerUpdate={handleLayerUpdate}
+              fieldGroups={fieldGroups}
+              allFields={fields}
+              collections={collections}
             />
 
             <LabelSettings
