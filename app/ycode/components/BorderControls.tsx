@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -66,7 +66,7 @@ function parseBorderColorToCss(color: string, colorVariables?: import('@/types')
   return color;
 }
 
-export default function BorderControls({ layer, onLayerUpdate, activeTextStyleKey, fieldGroups, allFields, collections }: BorderControlsProps) {
+const BorderControls = memo(function BorderControls({ layer, onLayerUpdate, activeTextStyleKey, fieldGroups, allFields, collections }: BorderControlsProps) {
   const { activeBreakpoint, activeUIState } = useEditorStore();
   const colorVariables = useColorVariablesStore((s) => s.colorVariables);
   const { updateDesignProperty, updateDesignProperties, debouncedUpdateDesignProperty, getDesignProperty } = useDesignSync({
@@ -684,4 +684,5 @@ export default function BorderControls({ layer, onLayerUpdate, activeTextStyleKe
 
     </div>
   );
-}
+});
+export default BorderControls;
