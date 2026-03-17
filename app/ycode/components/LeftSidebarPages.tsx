@@ -385,12 +385,13 @@ export default function LeftSidebarPages({
 
     if (result.error) {
       console.error('Failed to save page:', result.error);
-      // Could show a toast notification here
     } else {
       // Broadcast page update to other collaborators
       if (livePageUpdates) {
         livePageUpdates.broadcastPageUpdate(editingPage.id, pageUpdates);
       }
+      setShowPageSettings(false);
+      setEditingPage(null);
     }
   };
 
@@ -407,7 +408,9 @@ export default function LeftSidebarPages({
 
     if (result.error) {
       console.error('Failed to save folder:', result.error);
-      // Could show a toast notification here
+    } else {
+      setShowFolderSettings(false);
+      setEditingFolder(null);
     }
   };
 
@@ -771,7 +774,7 @@ export default function LeftSidebarPages({
                 <Icon name="plus" className={`${isMenuOpen ? 'rotate-45' : 'rotate-0'} transition-transform duration-100`} />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" side="bottom">
+            <DropdownMenuContent align="start" side="bottom" onCloseAutoFocus={(e) => e.preventDefault()}>
               <DropdownMenuItem onClick={() => handleAddPage()}>
                 Regular
               </DropdownMenuItem>
