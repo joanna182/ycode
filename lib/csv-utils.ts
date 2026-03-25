@@ -104,7 +104,7 @@ function pushParagraphWithImages(innerHtml: string, content: TipTapNode[]): void
 
 /**
  * Convert HTML string to TipTap JSON format
- * Handles common HTML tags: p, strong, b, em, i, u, s, strike, ol, ul, li, h1-h6, blockquote, br, a, img
+ * Handles common HTML tags: p, strong, b, em, i, u, s, strike, ol, ul, li, h1-h6, blockquote, br, a, img, hr
  * Preserves the original order of elements
  */
 function htmlToTipTapJSON(html: string): TipTapNode {
@@ -131,8 +131,8 @@ function htmlToTipTapJSON(html: string): TipTapNode {
     .replace(/\s+class="[^"]*"/gi, '') // Remove class attributes
     .replace(/<br\s*\/?>/gi, '\n'); // Normalize br tags
 
-  // Regex to match block-level elements and self-closing img tags in order
-  const blockRegex = /<(p|ol|ul|h[1-6]|blockquote|div)(?:\s[^>]*)?>[\s\S]*?<\/\1>|<img\s[^>]*\/?>/gi;
+  // Regex to match block-level elements, self-closing img tags, and hr tags
+  const blockRegex = /<(p|ol|ul|h[1-6]|blockquote|div)(?:\s[^>]*)?>[\s\S]*?<\/\1>|<img\s[^>]*\/?>|<hr\s*\/?>/gi;
 
   let lastIndex = 0;
   let match;
@@ -155,12 +155,18 @@ function htmlToTipTapJSON(html: string): TipTapNode {
       }
     }
 
-    // Handle <img> tags
+    // Handle self-closing tags (<img>, <hr>)
     if (fullMatch.toLowerCase().startsWith('<img')) {
       const imgNode = parseImgTag(fullMatch);
       if (imgNode) {
         content.push(imgNode);
       }
+      lastIndex = match.index + fullMatch.length;
+      continue;
+    }
+
+    if (fullMatch.toLowerCase().startsWith('<hr')) {
+      content.push({ type: 'horizontalRule' });
       lastIndex = match.index + fullMatch.length;
       continue;
     }
