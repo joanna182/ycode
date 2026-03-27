@@ -42,6 +42,8 @@ export async function POST(
       collectionLayerId,
       published = true,
       localeCode,
+      collectionLayerClasses,
+      collectionLayerTag,
     } = body;
 
     // Validate required fields
@@ -122,7 +124,10 @@ export async function POST(
       folders,
       collectionItemSlugs,
       locale,
-      translations
+      translations,
+      undefined,
+      collectionLayerClasses,
+      collectionLayerTag,
     );
 
     return noCache({

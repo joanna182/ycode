@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useFilterStore } from '@/stores/useFilterStore';
 import type { ConditionalVisibility, Layer } from '@/types';
 import { isDatePreset, resolveDateFilterValue } from '@/lib/collection-field-utils';
@@ -17,6 +17,8 @@ interface FilterableCollectionProps {
   limit?: number;
   paginationMode?: 'pages' | 'load_more';
   layerTemplate: Layer[];
+  collectionLayerClasses?: string[];
+  collectionLayerTag?: string;
 }
 
 const FC_FILTERED_ATTR = 'data-fc-filtered';
@@ -33,6 +35,8 @@ export default function FilterableCollection({
   limit,
   paginationMode,
   layerTemplate,
+  collectionLayerClasses,
+  collectionLayerTag,
 }: FilterableCollectionProps) {
   const markerRef = useRef<HTMLSpanElement>(null);
   const ssrChildrenRef = useRef<Element[]>([]);
@@ -42,13 +46,10 @@ export default function FilterableCollection({
   const abortRef = useRef<AbortController | null>(null);
   const inFlightRequestKeyRef = useRef<string | null>(null);
 
-  const hasInputLinkedFilters = useMemo(() => {
-    return filters.groups.some(g =>
-      g.conditions.some(c => c.inputLayerId || c.inputLayerId2)
-    );
-  }, [filters]);
-  const [pendingFirstEval, setPendingFirstEval] = useState(hasInputLinkedFilters);
-  const skippedInitialRef = useRef(false);
+  const hasInputLinkedFilters = filters.groups.some(g =>
+    g.conditions.some(c => c.inputLayerId || c.inputLayerId2)
+  );
+  const pendingFirstEvalRef = useRef(hasInputLinkedFilters);
 
   const [filteredPage, setFilteredPage] = useState(1);
   const [filteredTotalPages, setFilteredTotalPages] = useState(1);
@@ -117,7 +118,7 @@ export default function FilterableCollection({
     ssrChildrenRef.current = Array.from(parent.children).filter(
       el => el !== markerRef.current
     );
-    if (pendingFirstEval) {
+    if (pendingFirstEvalRef.current) {
       hideSSR();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -180,6 +181,20 @@ export default function FilterableCollection({
           }
           if (!inputValue && condition.operator !== 'is_between') continue;
           if (condition.fieldType === 'boolean' && inputValue === 'false') continue;
+
+          if (inputValue && inputValue.includes(',')) {
+            const checkedValues = inputValue.split(',').filter(Boolean);
+            if (checkedValues.length > 0) {
+              activeInGroup.push({
+                fieldId: condition.fieldId,
+                operator: 'is_one_of',
+                value: JSON.stringify(checkedValues),
+                fieldType: condition.fieldType,
+              });
+            }
+            continue;
+          }
+
           if (inputValue) value = inputValue;
         }
 
@@ -515,6 +530,8 @@ export default function FilterableCollection({
         limit,
         offset,
         published: true,
+        collectionLayerClasses,
+        collectionLayerTag,
       }),
       signal: controller.signal,
     })
@@ -583,23 +600,21 @@ export default function FilterableCollection({
     });
 
     if (filterKey === prevFilterKeyRef.current) {
-      if (pendingFirstEval) {
-        setPendingFirstEval(false);
+      if (pendingFirstEvalRef.current) {
+        pendingFirstEvalRef.current = false;
         showSSR();
       }
       return;
     }
     const wasEmpty = prevFilterKeyRef.current === '' || prevFilterKeyRef.current === '[]';
 
-    if (wasEmpty && hasInputLinkedFilters && !skippedInitialRef.current) {
-      skippedInitialRef.current = true;
-      return;
-    }
-
     prevFilterKeyRef.current = filterKey;
-    if (pendingFirstEval) setPendingFirstEval(false);
+    pendingFirstEvalRef.current = false;
 
     if (!hasRuntimeControls) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+
       const cleanUrl = new URL(window.location.href);
       if (cleanUrl.searchParams.has(fpKey)) {
         cleanUrl.searchParams.delete(fpKey);
@@ -633,6 +648,25 @@ export default function FilterableCollection({
       return;
     }
 
+    // On initial load, static filters are already applied server-side during SSR.
+    // Only fetch if user-interactive inputs actually have values (e.g. from URL params).
+    if (wasEmpty && !hasRuntimeSortOverride) {
+      const hasActiveInputValues = filters.groups.some(g =>
+        g.conditions.some(c => {
+          if (!c.inputLayerId) return false;
+          for (const layerValues of Object.values(filterValues)) {
+            if (c.inputLayerId in layerValues && layerValues[c.inputLayerId]) return true;
+          }
+          return false;
+        })
+      );
+
+      if (!hasActiveInputValues) {
+        showSSR();
+        return;
+      }
+    }
+
     setHasActiveFilters(true);
     hideSSR();
 
@@ -661,9 +695,7 @@ export default function FilterableCollection({
 
     const startOffset = (startPage - 1) * (limit || 10);
     fetchFiltered(filterGroups, startOffset, false);
-
-    return () => abortRef.current?.abort();
-  }, [filterValues, buildApiFilters, fetchFiltered, paginationMode, attachPaginationIntercept, detachPaginationIntercept, restoreSsrPagination, getSsrPaginationWrapper, updateEmptyStateElements, fpKey, pKey, limit, hasRuntimeSortOverride, effectiveSortBy, effectiveSortOrder, hideSSR, showSSR, clearFilteredDOM, hasInputLinkedFilters, pendingFirstEval]);
+  }, [filterValues, buildApiFilters, fetchFiltered, paginationMode, attachPaginationIntercept, detachPaginationIntercept, restoreSsrPagination, getSsrPaginationWrapper, updateEmptyStateElements, fpKey, pKey, limit, hasRuntimeSortOverride, effectiveSortBy, effectiveSortOrder, hideSSR, showSSR, clearFilteredDOM]);
 
   useEffect(() => {
     if (!hasActiveFilters || paginationMode !== 'pages') return;
@@ -678,6 +710,11 @@ export default function FilterableCollection({
   useEffect(() => {
     return () => detachPaginationIntercept();
   }, [detachPaginationIntercept]);
+
+  // Abort any in-flight fetch on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   // Loading state: apply opacity to the parent collection layer element
   useEffect(() => {

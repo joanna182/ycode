@@ -399,6 +399,8 @@ export interface Layer {
     limit?: number;
     paginationMode?: 'pages' | 'load_more';
     layerTemplate: Layer[];
+    collectionLayerClasses?: string[];
+    collectionLayerTag?: string;
   };
 }
 

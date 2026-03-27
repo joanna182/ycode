@@ -495,6 +495,8 @@ export async function POST(
       limit,
       offset = 0,
       localeCode,
+      collectionLayerClasses,
+      collectionLayerTag,
     } = body;
 
     if (!layerTemplate || !Array.isArray(layerTemplate)) {
@@ -609,6 +611,9 @@ export async function POST(
       collectionItemSlugs,
       locale,
       translations,
+      undefined,
+      collectionLayerClasses,
+      collectionLayerTag,
     );
 
     return noCache({
