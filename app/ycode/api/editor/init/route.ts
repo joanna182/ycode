@@ -10,7 +10,7 @@ import { getAllLocales } from '@/lib/repositories/localeRepository';
 import { getAllAssets } from '@/lib/repositories/assetRepository';
 import { getAllAssetFolders } from '@/lib/repositories/assetFolderRepository';
 import { getAllFonts } from '@/lib/repositories/fontRepository';
-import { getMapboxAccessToken } from '@/lib/map-server';
+import { getMapboxAccessToken, getGoogleMapsEmbedApiKey } from '@/lib/map-server';
 
 /**
  * GET /ycode/api/editor/init
@@ -30,7 +30,7 @@ import { getMapboxAccessToken } from '@/lib/map-server';
 export async function GET() {
   try {
     // Load all data in parallel (only drafts for editor)
-    const [pages, drafts, folders, components, styles, settings, collections, locales, assets, assetFolders, fonts, resolvedMapboxToken] = await Promise.all([
+    const [pages, drafts, folders, components, styles, settings, collections, locales, assets, assetFolders, fonts, resolvedMapboxToken, resolvedGoogleMapsEmbedKey] = await Promise.all([
       getAllDraftPages(),
       getAllDraftLayers(),
       getAllPageFolders({ is_published: false }),
@@ -43,18 +43,25 @@ export async function GET() {
       getAllAssetFolders(false),
       getAllFonts(),
       getMapboxAccessToken(),
+      getGoogleMapsEmbedApiKey(),
     ]);
 
     // Inject app-sourced tokens into settings so they're available via settingsByKey
     const enrichedSettings = [...settings];
-    if (resolvedMapboxToken) {
-      enrichedSettings.push({
-        id: 'app:mapbox:access_token',
-        key: 'mapbox_access_token',
-        value: resolvedMapboxToken,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+    const injectedTokens: [string, string, string | null][] = [
+      ['app:mapbox:access_token', 'mapbox_access_token', resolvedMapboxToken],
+      ['app:google-maps-embed:api_key', 'google_maps_embed_api_key', resolvedGoogleMapsEmbedKey],
+    ];
+    for (const [id, key, value] of injectedTokens) {
+      if (value) {
+        enrichedSettings.push({
+          id,
+          key,
+          value,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
     }
 
     return NextResponse.json({

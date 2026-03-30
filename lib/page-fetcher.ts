@@ -31,22 +31,25 @@ import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import { parseMultiAssetFieldValue, buildAssetVirtualValues } from '@/lib/multi-asset-utils';
 import { parseMultiReferenceValue } from '@/lib/collection-utils';
 import { combineBgValues, mergeStaticBgVars } from '@/lib/tailwind-class-mapper';
-import { buildMapEmbedHtml, DEFAULT_MAP_SETTINGS } from '@/lib/map-utils';
-import { getMapboxAccessToken } from '@/lib/map-server';
+import { getMapIframeProps, DEFAULT_MAP_SETTINGS } from '@/lib/map-utils';
+import { getMapboxAccessToken, getGoogleMapsEmbedApiKey } from '@/lib/map-server';
 import { getAssetsByIds } from '@/lib/repositories/assetRepository';
 import { isVirtualAssetField, findDisplayField } from '@/lib/collection-field-utils';
 import type { FieldVariable, AssetVariable, DynamicTextVariable, LinkSettings } from '@/types';
 import type { DesignColorVariable } from '@/types';
 
-// Cached Mapbox access token for synchronous use inside layerToHtml.
-// Set by ensureMapboxToken() before HTML generation begins.
+// Cached map provider tokens for synchronous use inside layerToHtml.
+// Set by ensureMapTokens() before HTML generation begins.
 let _cachedMapboxToken: string | null = null;
+let _cachedGoogleMapsEmbedKey: string | null = null;
 
-async function ensureMapboxToken(): Promise<string | null> {
+async function ensureMapTokens(): Promise<void> {
   if (_cachedMapboxToken === null) {
     _cachedMapboxToken = (await getMapboxAccessToken()) || '';
   }
-  return _cachedMapboxToken || null;
+  if (_cachedGoogleMapsEmbedKey === null) {
+    _cachedGoogleMapsEmbedKey = (await getGoogleMapsEmbedApiKey()) || '';
+  }
 }
 
 /**
@@ -2551,8 +2554,8 @@ export async function renderCollectionItemsToHtml(
   // Get timezone setting for date formatting
   const htmlTimezone = (await getSettingByKey('timezone') as string | null) || 'UTC';
 
-  // Pre-fetch Mapbox token for map layers in HTML export
-  await ensureMapboxToken();
+  // Pre-fetch map provider tokens for map layers in HTML export
+  await ensureMapTokens();
 
   // Render each item using the template
   const renderedItems = await Promise.all(
@@ -3476,16 +3479,26 @@ function layerToHtml(
     }
   }
 
-  // Handle Map layers (Mapbox GL JS iframe)
+  // Handle Map layers — provider-aware iframe
   if (layer.name === 'map') {
-    const mapSettings = layer.settings?.map || DEFAULT_MAP_SETTINGS;
-    const mapToken = _cachedMapboxToken;
+    const mapSettings = {
+      ...DEFAULT_MAP_SETTINGS,
+      ...layer.settings?.map,
+      mapbox: { ...DEFAULT_MAP_SETTINGS.mapbox, ...layer.settings?.map?.mapbox },
+      google: { ...DEFAULT_MAP_SETTINGS.google, ...layer.settings?.map?.google },
+    };
+    const mapToken = mapSettings.provider === 'google'
+      ? _cachedGoogleMapsEmbedKey
+      : _cachedMapboxToken;
 
     if (mapToken) {
-      const mapHtml = buildMapEmbedHtml(mapSettings, mapToken);
-      const escapedSrcdoc = escapeHtml(mapHtml);
+      const iframeProps = getMapIframeProps(mapSettings, mapToken);
       const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-      return `<div${attrsStr}><iframe srcdoc="${escapedSrcdoc}" sandbox="allow-scripts" style="width:100%;height:100%;border:none;display:block" title="Map"></iframe></div>`;
+      if (iframeProps.type === 'src') {
+        return `<div${attrsStr}><iframe src="${escapeHtml(iframeProps.src)}" referrerpolicy="no-referrer-when-downgrade" loading="lazy" style="width:100%;height:100%;border:none;display:block" title="Map"></iframe></div>`;
+      }
+      const escapedSrcdoc = escapeHtml(iframeProps.srcDoc);
+      return `<div${attrsStr}><iframe srcdoc="${escapedSrcdoc}" sandbox="allow-scripts allow-same-origin" style="width:100%;height:100%;border:none;display:block" title="Map"></iframe></div>`;
     }
 
     const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';

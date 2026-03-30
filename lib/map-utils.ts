@@ -1,16 +1,43 @@
 /**
  * Map Utilities
  *
- * Generates self-contained HTML for Mapbox GL JS map embeds.
- * Used by LayerRenderer (canvas/published) and page-fetcher (static HTML export).
+ * Generates iframe props for map embeds.
+ * - Mapbox: self-contained HTML via srcDoc (Mapbox GL JS)
+ * - Google Maps: direct URL via src (Maps Embed API)
  */
 
-import type { ColorVariable, MapSettings, MapStyle } from '@/types';
+import type { ColorVariable, GoogleMapStyle, MapProvider, MapProviderSettings, MapSettings, MapStyle } from '@/types';
+
+// =============================================================================
+// Provider config
+// =============================================================================
+
+const PROVIDER_CONFIG: Record<MapProvider, {
+  tokenSettingKey: string;
+  appId: string;
+  label: string;
+}> = {
+  mapbox: { tokenSettingKey: 'mapbox_access_token', appId: 'mapbox', label: 'Mapbox' },
+  google: { tokenSettingKey: 'google_maps_embed_api_key', appId: 'google-maps-embed', label: 'Google Map' },
+};
+
+export function getProviderConfig(provider: MapProvider) {
+  return PROVIDER_CONFIG[provider];
+}
+
+export const MAP_PROVIDER_OPTIONS: { value: MapProvider; label: string }[] = [
+  { value: 'google', label: 'Google Map' },
+  { value: 'mapbox', label: 'Mapbox' },
+];
+
+// =============================================================================
+// Mapbox
+// =============================================================================
 
 const MAPBOX_GL_VERSION = 'v3.20.0';
 const MAPBOX_CDN_BASE = `https://cdn.jsdelivr.net/npm/mapbox-gl@${MAPBOX_GL_VERSION}/dist`;
 
-const STYLE_URLS: Record<MapStyle, string> = {
+const MAPBOX_STYLE_URLS: Record<MapStyle, string> = {
   streets: 'mapbox://styles/mapbox/streets-v12',
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
   light: 'mapbox://styles/mapbox/light-v11',
@@ -18,7 +45,7 @@ const STYLE_URLS: Record<MapStyle, string> = {
   outdoors: 'mapbox://styles/mapbox/outdoors-v12',
 };
 
-export const MAP_STYLE_OPTIONS: { value: MapStyle; label: string }[] = [
+export const MAPBOX_STYLE_OPTIONS: { value: MapStyle; label: string }[] = [
   { value: 'streets', label: 'Streets' },
   { value: 'satellite', label: 'Satellite' },
   { value: 'light', label: 'Light' },
@@ -26,23 +53,55 @@ export const MAP_STYLE_OPTIONS: { value: MapStyle; label: string }[] = [
   { value: 'outdoors', label: 'Outdoors' },
 ];
 
+// =============================================================================
+// Google Maps
+// =============================================================================
+
+export const GOOGLE_STYLE_OPTIONS: { value: GoogleMapStyle; label: string }[] = [
+  { value: 'roadmap', label: 'Roadmap' },
+  { value: 'satellite', label: 'Satellite' },
+];
+
+// =============================================================================
+// Defaults
+// =============================================================================
+
+const DEFAULT_PROVIDER_SETTINGS: Record<MapProvider, MapProviderSettings> = {
+  mapbox: {
+    style: 'streets',
+    interactive: true,
+    scrollZoom: true,
+    showNavControl: false,
+    showScaleBar: false,
+  },
+  google: {
+    style: 'roadmap',
+    interactive: true,
+    scrollZoom: true,
+    showNavControl: false,
+    showScaleBar: false,
+  },
+};
+
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
+  provider: 'mapbox',
   latitude: 40.712749,
   longitude: -74.005994,
   zoom: 12,
-  style: 'streets',
   markerColor: '#2e79d6',
-  interactive: true,
-  scrollZoom: true,
-  showNavControl: false,
-  showScaleBar: false,
   search: 'New York',
+  mapbox: DEFAULT_PROVIDER_SETTINGS.mapbox,
+  google: DEFAULT_PROVIDER_SETTINGS.google,
 };
 
-/** Resolve a map style shorthand to a Mapbox style URL */
-export function getMapboxStyleUrl(style: MapStyle): string {
-  return STYLE_URLS[style] || STYLE_URLS.streets;
+/** Get style options for the given provider */
+export function getStyleOptions(provider: MapProvider) {
+  return provider === 'google' ? GOOGLE_STYLE_OPTIONS : MAPBOX_STYLE_OPTIONS;
 }
+
+// =============================================================================
+// Color variable resolution
+// =============================================================================
 
 /** Resolve a marker color value, looking up color variables when referenced */
 export function resolveMarkerColor(
@@ -58,19 +117,49 @@ export function resolveMarkerColor(
   return markerColor;
 }
 
-/**
- * Build a self-contained HTML document that renders a Mapbox GL JS map.
- * Loaded via iframe srcdoc in both the editor and published/exported pages.
- */
-export function buildMapEmbedHtml(
+// =============================================================================
+// Iframe props builders
+// =============================================================================
+
+export type MapIframeProps =
+  | { type: 'srcDoc'; srcDoc: string }
+  | { type: 'src'; src: string };
+
+/** Build iframe props for the active provider */
+export function getMapIframeProps(settings: MapSettings, token: string): MapIframeProps {
+  if (settings.provider === 'google') {
+    return { type: 'src', src: buildGoogleMapsEmbedUrl(settings, token) };
+  }
+  const ps = settings[settings.provider];
+  return { type: 'srcDoc', srcDoc: buildMapboxEmbedHtml(settings, ps, token) };
+}
+
+const GOOGLE_EMBED_BASE = 'https://www.google.com/maps/embed/v1';
+
+/** Build a Google Maps Embed API URL (uses `place` mode with a pin) */
+function buildGoogleMapsEmbedUrl(settings: MapSettings, apiKey: string): string {
+  const { latitude, longitude, zoom } = settings;
+  const ps = settings.google;
+  const maptype = (ps.style as GoogleMapStyle) || 'roadmap';
+
+  const params = new URLSearchParams({
+    key: apiKey,
+    q: `${latitude},${longitude}`,
+    zoom: String(Math.round(zoom)),
+    maptype,
+  });
+
+  return `${GOOGLE_EMBED_BASE}/place?${params.toString()}`;
+}
+
+function buildMapboxEmbedHtml(
   settings: MapSettings,
-  accessToken: string
+  ps: MapProviderSettings,
+  accessToken: string,
 ): string {
-  const styleUrl = getMapboxStyleUrl(settings.style);
-  const {
-    latitude, longitude, zoom, markerColor, interactive,
-    scrollZoom, showNavControl, showScaleBar,
-  } = settings;
+  const styleUrl = MAPBOX_STYLE_URLS[ps.style as MapStyle] || MAPBOX_STYLE_URLS.streets;
+  const { latitude, longitude, zoom, markerColor } = settings;
+  const { interactive, scrollZoom, showNavControl, showScaleBar } = ps;
 
   const disableHandlers: string[] = [];
   if (!interactive) {

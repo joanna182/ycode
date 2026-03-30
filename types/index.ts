@@ -228,19 +228,27 @@ export interface LayerSettings {
   map?: MapSettings; // Map-specific settings (only for map layers)
 }
 
+export type MapProvider = 'mapbox' | 'google';
 export type MapStyle = 'streets' | 'satellite' | 'light' | 'dark' | 'outdoors';
+export type GoogleMapStyle = 'roadmap' | 'satellite';
 
-export interface MapSettings {
-  latitude: number;
-  longitude: number;
-  zoom: number;
-  style: MapStyle;
-  markerColor: string | null;
+export interface MapProviderSettings {
+  style: string;
   interactive: boolean;
   scrollZoom: boolean;
   showNavControl: boolean;
   showScaleBar: boolean;
+}
+
+export interface MapSettings {
+  provider: MapProvider;
+  latitude: number;
+  longitude: number;
+  zoom: number;
+  markerColor: string | null;
   search?: string;
+  mapbox: MapProviderSettings;
+  google: MapProviderSettings;
 }
 
 // Layer Style Types

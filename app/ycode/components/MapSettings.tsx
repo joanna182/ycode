@@ -3,8 +3,9 @@
 /**
  * Map Settings Component
  *
- * Settings panel for map layers (Mapbox-powered).
- * Controls coordinates, zoom, style, marker visibility, and interactivity.
+ * Settings panel for map layers.
+ * Supports multiple providers (Mapbox, Google Map) with shared
+ * location/zoom/marker settings and provider-specific style/behavior.
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -30,15 +31,22 @@ import ColorPicker from './ColorPicker';
 import SettingsPanel from './SettingsPanel';
 
 import { useSettingsStore } from '@/stores/useSettingsStore';
-import { MAP_STYLE_OPTIONS, DEFAULT_MAP_SETTINGS } from '@/lib/map-utils';
+import {
+  DEFAULT_MAP_SETTINGS,
+  MAP_PROVIDER_OPTIONS,
+  getStyleOptions,
+  getProviderConfig,
+} from '@/lib/map-utils';
 import { useDebounce } from '@/hooks/use-debounce';
-import type { Layer, MapSettings as MapSettingsType, MapStyle } from '@/types';
+import type { Layer, MapSettings as MapSettingsType, MapProvider, MapProviderSettings } from '@/types';
 
 type SearchResult = { place_name: string; center: [number, number] };
 
 const ZOOM_MIN = 1;
-const ZOOM_MAX = 22;
-const ZOOM_STEP = 0.1;
+const ZOOM_MAX_MAPBOX = 22;
+const ZOOM_MAX_GOOGLE = 21;
+const ZOOM_STEP_MAPBOX = 0.1;
+const ZOOM_STEP_GOOGLE = 1;
 
 interface MapSettingsProps {
   layer: Layer | null;
@@ -48,10 +56,22 @@ interface MapSettingsProps {
 export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) {
   const [isOpen, setIsOpen] = useState(true);
   const mapSettings = useMemo(
-    () => ({ ...DEFAULT_MAP_SETTINGS, ...layer?.settings?.map }),
+    () => ({
+      ...DEFAULT_MAP_SETTINGS,
+      ...layer?.settings?.map,
+      mapbox: { ...DEFAULT_MAP_SETTINGS.mapbox, ...layer?.settings?.map?.mapbox },
+      google: { ...DEFAULT_MAP_SETTINGS.google, ...layer?.settings?.map?.google },
+    }),
     [layer?.settings?.map]
   );
-  const hasToken = !!useSettingsStore((s) => s.getSettingByKey('mapbox_access_token'));
+
+  const provider = mapSettings.provider;
+  const providerSettings = mapSettings[provider];
+  const providerConfig = getProviderConfig(provider);
+  const hasToken = !!useSettingsStore((s) => s.getSettingByKey(providerConfig.tokenSettingKey));
+
+  const zoomMax = provider === 'google' ? ZOOM_MAX_GOOGLE : ZOOM_MAX_MAPBOX;
+  const zoomStep = provider === 'google' ? ZOOM_STEP_GOOGLE : ZOOM_STEP_MAPBOX;
 
   // Local input state for lat/lng/zoom to allow free typing
   const [latInput, setLatInput] = useState(String(mapSettings.latitude));
@@ -91,6 +111,16 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     [layer, mapSettings, onLayerUpdate]
   );
 
+  /** Update a field inside the active provider's nested settings */
+  const updateProviderSettings = useCallback(
+    (updates: Partial<MapProviderSettings>) => {
+      updateMapSettings({
+        [provider]: { ...providerSettings, ...updates },
+      });
+    },
+    [provider, providerSettings, updateMapSettings]
+  );
+
   const debouncedUpdateRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const debouncedUpdateMapSettings = useCallback(
     (updates: Partial<MapSettingsType>) => {
@@ -127,12 +157,12 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     (value: string) => {
       const num = parseFloat(value);
       if (!isNaN(num)) {
-        const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, num));
+        const clamped = Math.max(ZOOM_MIN, Math.min(zoomMax, num));
         setZoomInput(String(clamped));
         debouncedUpdateMapSettings({ zoom: clamped });
       }
     },
-    [debouncedUpdateMapSettings]
+    [debouncedUpdateMapSettings, zoomMax]
   );
 
   const handleSliderZoomChange = useCallback(
@@ -156,7 +186,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     searchAbortRef.current = controller;
 
     setIsSearching(true);
-    fetch(`/ycode/api/maps/geocode?q=${encodeURIComponent(debouncedQuery)}`, {
+    fetch(`/ycode/api/maps/geocode?q=${encodeURIComponent(debouncedQuery)}&provider=${provider}`, {
       signal: controller.signal,
     })
       .then((res) => res.json())
@@ -171,7 +201,7 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
         }
       })
       .finally(() => setIsSearching(false));
-  }, [debouncedQuery]);
+  }, [debouncedQuery, provider]);
 
   const handleSelectResult = useCallback(
     (result: SearchResult) => {
@@ -189,24 +219,57 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
     return null;
   }
 
+  const styleOptions = getStyleOptions(provider);
+
   return (
     <SettingsPanel
       title="Map"
       isOpen={isOpen}
       onToggle={() => setIsOpen(!isOpen)}
-      action={
-        <Button
-          asChild
-          size="xs"
-          variant={hasToken ? 'secondary' : 'destructive'}
-        >
-          <Link href="/ycode/integrations/apps?app=mapbox">
-            Config
-          </Link>
-        </Button>
-      }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2.5">
+        {/* Provider */}
+        <div className="grid grid-cols-3 items-center">
+          <Label variant="muted">Provider</Label>
+          <div className="col-span-2 flex items-center gap-1.5">
+            <Select
+              value={provider}
+              onValueChange={(value: MapProvider) =>
+                updateMapSettings({ provider: value })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MAP_PROVIDER_OPTIONS.map((opt) => (
+                  <SelectItem
+                    key={opt.value}
+                    value={opt.value}
+                  >
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  asChild
+                  size="sm"
+                  variant={hasToken ? 'secondary' : 'default'}
+                  className="shrink-0"
+                >
+                  <Link href={`/ycode/integrations/apps?type=maps&app=${providerConfig.appId}`}>
+                    <Icon name="settings" />
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Set {providerConfig.label} API key</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
         {/* Address search */}
         <Popover open={isAddressFocused && searchResults.length > 0}>
           <div className="grid grid-cols-3 items-start">
@@ -277,8 +340,8 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
             <Slider
               value={[parseFloat(zoomInput) || mapSettings.zoom]}
               min={ZOOM_MIN}
-              max={ZOOM_MAX}
-              step={ZOOM_STEP}
+              max={zoomMax}
+              step={zoomStep}
               onValueChange={handleSliderZoomChange}
               className="flex-1 min-w-0"
             />
@@ -286,8 +349,8 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
               <Input
                 stepper
                 min={ZOOM_MIN}
-                max={ZOOM_MAX}
-                step={ZOOM_STEP}
+                max={zoomMax}
+                step={zoomStep}
                 value={zoomInput}
                 onChange={(e) => handleZoomChange(e.target.value)}
                 className="pr-5!"
@@ -296,21 +359,21 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
           </div>
         </div>
 
-        {/* Style */}
+        {/* Style (provider-specific) */}
         <div className="grid grid-cols-3 items-center">
           <Label variant="muted">Style</Label>
           <div className="col-span-2">
             <Select
-              value={mapSettings.style}
-              onValueChange={(value: MapStyle) =>
-                updateMapSettings({ style: value })
+              value={providerSettings.style}
+              onValueChange={(value: string) =>
+                updateProviderSettings({ style: value })
               }
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MAP_STYLE_OPTIONS.map((opt) => (
+                {styleOptions.map((opt) => (
                   <SelectItem
                     key={opt.value}
                     value={opt.value}
@@ -323,92 +386,96 @@ export default function MapSettings({ layer, onLayerUpdate }: MapSettingsProps) 
           </div>
         </div>
 
-        {/* Marker */}
-        <div className="grid grid-cols-3 items-center gap-2">
-          <Label variant="muted">Marker</Label>
-          <div className="col-span-2 [&>div]:w-full [&>button]:w-full">
-            <ColorPicker
-              value={mapSettings.markerColor || ''}
-              onChange={(value) => updateMapSettings({ markerColor: value || null })}
-              onClear={() => updateMapSettings({ markerColor: null })}
-              defaultValue="#2e79d6"
-              placeholder="No marker"
-              solidOnly
-            />
+        {/* Marker (Mapbox only — Embed API uses default pin) */}
+        {provider === 'mapbox' && (
+          <div className="grid grid-cols-3 items-center gap-2">
+            <Label variant="muted">Marker</Label>
+            <div className="col-span-2 [&>div]:w-full [&>button]:w-full">
+              <ColorPicker
+                value={mapSettings.markerColor || ''}
+                onChange={(value) => updateMapSettings({ markerColor: value || null })}
+                onClear={() => updateMapSettings({ markerColor: null })}
+                defaultValue="#2e79d6"
+                placeholder="No marker"
+                solidOnly
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Behavior */}
-        <div className="grid grid-cols-3 items-start gap-2">
-          <Label variant="muted">Behavior</Label>
-          <div className="col-span-2 flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="map-interactive"
-                checked={mapSettings.interactive}
-                onCheckedChange={(checked: boolean) =>
-                  updateMapSettings({ interactive: checked })
-                }
-              />
-              <Label
-                variant="muted"
-                htmlFor="map-interactive"
-                className="cursor-pointer"
-              >
-                Interactive
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="map-scroll-zoom"
-                checked={mapSettings.scrollZoom}
-                disabled={!mapSettings.interactive}
-                onCheckedChange={(checked: boolean) =>
-                  updateMapSettings({ scrollZoom: checked })
-                }
-              />
-              <Label
-                variant="muted"
-                htmlFor="map-scroll-zoom"
-                className="cursor-pointer"
-              >
-                Zoom with scroll
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="map-nav-control"
-                checked={mapSettings.showNavControl}
-                onCheckedChange={(checked: boolean) =>
-                  updateMapSettings({ showNavControl: checked })
-                }
-              />
-              <Label
-                variant="muted"
-                htmlFor="map-nav-control"
-                className="cursor-pointer"
-              >
-                Navigation control
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="map-scale-bar"
-                checked={mapSettings.showScaleBar}
-                onCheckedChange={(checked: boolean) =>
-                  updateMapSettings({ showScaleBar: checked })
-                }
-              />
-              <Label
-                variant="muted"
-                htmlFor="map-scale-bar"
-                className="cursor-pointer"
-              >
-                Scale bar
-              </Label>
+        {/* Behavior (Mapbox only — Embed API controls interactivity) */}
+        {provider === 'mapbox' && (
+          <div className="grid grid-cols-3 items-start gap-2">
+            <Label variant="muted">Behavior</Label>
+            <div className="col-span-2 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="map-interactive"
+                  checked={providerSettings.interactive}
+                  onCheckedChange={(checked: boolean) =>
+                    updateProviderSettings({ interactive: checked })
+                  }
+                />
+                <Label
+                  variant="muted"
+                  htmlFor="map-interactive"
+                  className="cursor-pointer"
+                >
+                  Interactive
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="map-scroll-zoom"
+                  checked={providerSettings.scrollZoom}
+                  disabled={!providerSettings.interactive}
+                  onCheckedChange={(checked: boolean) =>
+                    updateProviderSettings({ scrollZoom: checked })
+                  }
+                />
+                <Label
+                  variant="muted"
+                  htmlFor="map-scroll-zoom"
+                  className="cursor-pointer"
+                >
+                  Zoom with scroll
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="map-nav-control"
+                  checked={providerSettings.showNavControl}
+                  onCheckedChange={(checked: boolean) =>
+                    updateProviderSettings({ showNavControl: checked })
+                  }
+                />
+                <Label
+                  variant="muted"
+                  htmlFor="map-nav-control"
+                  className="cursor-pointer"
+                >
+                  Navigation control
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="map-scale-bar"
+                  checked={providerSettings.showScaleBar}
+                  onCheckedChange={(checked: boolean) =>
+                    updateProviderSettings({ showScaleBar: checked })
+                  }
+                />
+                <Label
+                  variant="muted"
+                  htmlFor="map-scale-bar"
+                  className="cursor-pointer"
+                >
+                  Scale bar
+                </Label>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </SettingsPanel>
   );

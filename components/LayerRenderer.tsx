@@ -12,7 +12,7 @@ import type { Layer, Locale, ComponentVariable, FormSettings, LinkSettings, Brea
 import type { UseLiveLayerUpdatesReturn } from '@/hooks/use-live-layer-updates';
 import type { UseLiveComponentUpdatesReturn } from '@/hooks/use-live-component-updates';
 import { getLayerHtmlTag, getClassesString, getText, resolveFieldValue, isTextEditable, isTextContentLayer, isRichTextLayer, getCollectionVariable, evaluateVisibility, findAncestorByName, filterDisabledSliderLayers, getLayerCmsFieldBinding } from '@/lib/layer-utils';
-import { buildMapEmbedHtml, DEFAULT_MAP_SETTINGS, resolveMarkerColor } from '@/lib/map-utils';
+import { getMapIframeProps, DEFAULT_MAP_SETTINGS, resolveMarkerColor } from '@/lib/map-utils';
 import { SWIPER_CLASS_MAP, SWIPER_DATA_ATTR_MAP } from '@/lib/templates/utilities';
 import { useCanvasSlider } from '@/hooks/use-canvas-slider';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
@@ -2263,12 +2263,18 @@ const LayerItem: React.FC<{
       );
     }
 
-    // Handle Map layers - Mapbox GL JS iframe
+    // Handle Map layers — provider-aware iframe
     if (layer.name === 'map') {
-      const mapToken = (settingsByKey.mapbox_access_token || serverSettings?.mapbox_access_token) as string | undefined;
-      const mapSettings = layer.settings?.map || DEFAULT_MAP_SETTINGS;
+      const mapSettings = { ...DEFAULT_MAP_SETTINGS, ...layer.settings?.map,
+        mapbox: { ...DEFAULT_MAP_SETTINGS.mapbox, ...layer.settings?.map?.mapbox },
+        google: { ...DEFAULT_MAP_SETTINGS.google, ...layer.settings?.map?.google },
+      };
+      const provider = mapSettings.provider;
+      const tokenKey = provider === 'google' ? 'google_maps_embed_api_key' : 'mapbox_access_token';
+      const mapToken = (settingsByKey[tokenKey] || serverSettings?.[tokenKey]) as string | undefined;
 
       if (!mapToken) {
+        const label = provider === 'google' ? 'Google Map API key' : 'Mapbox token';
         return (
           <div
             data-layer-id={layer.id}
@@ -2278,7 +2284,7 @@ const LayerItem: React.FC<{
             {...(isEditMode && !isEditing ? elementProps : {})}
           >
             <div className="flex items-center justify-center h-full bg-muted text-muted-foreground text-xs">
-              Mapbox token not configured
+              {label} not configured
             </div>
           </div>
         );
@@ -2291,7 +2297,7 @@ const LayerItem: React.FC<{
         ...mapSettings,
         markerColor: resolveMarkerColor(mapSettings.markerColor, cvList),
       };
-      const mapHtml = buildMapEmbedHtml(resolvedSettings, mapToken);
+      const iframeProps = getMapIframeProps(resolvedSettings, mapToken);
 
       return (
         <div
@@ -2302,8 +2308,10 @@ const LayerItem: React.FC<{
           {...(isEditMode && !isEditing ? elementProps : {})}
         >
           <iframe
-            srcDoc={mapHtml}
-            sandbox="allow-scripts"
+            {...(iframeProps.type === 'src'
+              ? { src: iframeProps.src, referrerPolicy: 'no-referrer-when-downgrade' as const }
+              : { srcDoc: iframeProps.srcDoc, sandbox: 'allow-scripts allow-same-origin' }
+            )}
             className={isEditMode ? 'pointer-events-none' : ''}
             style={{
               width: '100%',
@@ -2312,6 +2320,7 @@ const LayerItem: React.FC<{
               display: 'block',
             }}
             title="Map"
+            suppressHydrationWarning
           />
         </div>
       );
