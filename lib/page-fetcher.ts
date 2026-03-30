@@ -1983,12 +1983,20 @@ export async function resolveCollectionLayers(
         const defaultItemId = opts.defaultItemId;
         const hasDefault = !!(defaultItemId && sourceItems.some(i => i.id === defaultItemId));
 
-        const placeholderText = layer.settings?.placeholder || 'Select...';
+        const existingPlaceholder = layer.children?.find(
+          (c) => c.name === 'option' && c.settings?.isPlaceholder
+        );
+        const placeholderText = (
+          existingPlaceholder?.variables?.text?.type === 'dynamic_text'
+            ? existingPlaceholder.variables.text.data.content
+            : null
+        ) || 'Select...';
         const placeholderOption: Layer = {
-          id: `${layer.id}-opt-placeholder`,
+          id: existingPlaceholder?.id || `${layer.id}-opt-placeholder`,
           name: 'option',
           classes: '',
           attributes: { value: '', disabled: true, hidden: true },
+          settings: { isPlaceholder: true },
           variables: {
             text: { type: 'dynamic_text' as const, data: { content: placeholderText } },
           },

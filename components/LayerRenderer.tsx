@@ -2086,14 +2086,15 @@ const LayerItem: React.FC<{
         delete elementProps.value;
       }
 
-      // When a placeholder is configured and no default value is set,
-      // default to the empty-value placeholder option.
-      if (layer.settings?.placeholder && !elementProps.defaultValue) {
-        elementProps.defaultValue = '';
-      }
-
       if (isEditMode && layer.settings?.optionsSource?.collectionId) {
-        const editPlaceholder = layer.settings?.placeholder || '(Options from collection)';
+        const placeholderChild = effectiveLayer.children?.find(
+          (c) => c.name === 'option' && c.settings?.isPlaceholder
+        );
+        const editPlaceholder = (
+          placeholderChild?.variables?.text?.type === 'dynamic_text'
+            ? placeholderChild.variables.text.data.content
+            : null
+        ) || '(Options from collection)';
         return (
           <Tag {...elementProps}>
             <option disabled value="">{editPlaceholder}</option>
@@ -2936,14 +2937,6 @@ const LayerItem: React.FC<{
         )}
 
         {textContent && textContent}
-
-        {/* Render placeholder option for select elements */}
-        {htmlTag === 'select' && layer.settings?.placeholder && (
-          <option
-            value="" disabled
-            hidden
-          >{layer.settings.placeholder}</option>
-        )}
 
         {/* Render children */}
         {effectiveChildren && effectiveChildren.length > 0 && (
