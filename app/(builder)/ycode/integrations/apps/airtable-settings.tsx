@@ -39,10 +39,10 @@ import { toast } from 'sonner';
 
 import { useCollectionsStore } from '@/stores/useCollectionsStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
-import { isFieldTypeCompatible } from '@/lib/apps/airtable/field-mapping';
+import { isFieldTypeCompatible, getAirtableFieldTypeLabel } from '@/lib/apps/airtable/field-mapping';
 import { formatDateInTimezone } from '@/lib/date-format-utils';
 import { formatRelativeTime } from '@/lib/utils';
-import { getFieldIcon } from '@/lib/collection-field-utils';
+import { getFieldIcon, getFieldTypeLabel } from '@/lib/collection-field-utils';
 import { airtableApi } from '@/lib/apps/airtable/client';
 import type {
   AirtableConnection,
@@ -925,7 +925,7 @@ function FieldMappingGrid({
                         />
                         <span className="truncate">{cmsField.name}</span>
                       </span>
-                      <span className="text-muted-foreground text-[10px] shrink-0">{cmsField.type}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{getFieldTypeLabel(cmsField.type)}</span>
                     </span>
                   </SelectItem>
                 </SelectContent>
@@ -964,7 +964,7 @@ function FieldMappingGrid({
                     >
                       <span className="flex items-center justify-between gap-2 w-full">
                         <span className="truncate">{atField.name}</span>
-                        <span className="text-muted-foreground text-[10px] shrink-0">{atField.type}</span>
+                        <span className="text-muted-foreground text-[10px] shrink-0">{getAirtableFieldTypeLabel(atField.type)}</span>
                       </span>
                     </SelectItem>
                   ))}

@@ -55,6 +55,48 @@ export function getCmsFieldType(airtableType: AirtableFieldType): CollectionFiel
   return FIELD_TYPE_MAP[airtableType] || 'text';
 }
 
+const AIRTABLE_FIELD_TYPE_LABELS: Partial<Record<AirtableFieldType, string>> = {
+  singleLineText: 'Text',
+  email: 'Email',
+  url: 'URL',
+  multilineText: 'Long text',
+  number: 'Number',
+  percent: 'Percent',
+  currency: 'Currency',
+  singleSelect: 'Single select',
+  multipleSelects: 'Multiple select',
+  singleCollaborator: 'Collaborator',
+  multipleCollaborators: 'Collaborators',
+  multipleRecordLinks: 'Linked records',
+  date: 'Date',
+  dateTime: 'Date & Time',
+  phoneNumber: 'Phone',
+  multipleAttachments: 'Attachments',
+  checkbox: 'Checkbox',
+  formula: 'Formula',
+  createdTime: 'Created time',
+  rollup: 'Rollup',
+  count: 'Count',
+  lookup: 'Lookup',
+  multipleLookupValues: 'Lookup',
+  autoNumber: 'Auto number',
+  barcode: 'Barcode',
+  rating: 'Rating',
+  richText: 'Rich text',
+  duration: 'Duration',
+  lastModifiedTime: 'Modified time',
+  button: 'Button',
+  createdBy: 'Created by',
+  lastModifiedBy: 'Modified by',
+  externalSyncSource: 'Sync source',
+  aiText: 'AI text',
+};
+
+/** Get human-readable label for an Airtable field type */
+export function getAirtableFieldTypeLabel(type: AirtableFieldType | string): string {
+  return AIRTABLE_FIELD_TYPE_LABELS[type as AirtableFieldType] ?? type;
+}
+
 /** Check if an Airtable field type is compatible with a CMS field type */
 export function isFieldTypeCompatible(
   airtableType: AirtableFieldType,
@@ -159,6 +201,26 @@ export function transformFieldValue(
 
     case 'multipleCollaborators':
       return extractMultipleCollaboratorNames(value);
+
+    case 'date':
+    case 'dateTime':
+    case 'createdTime':
+    case 'lastModifiedTime': {
+      const str = String(value);
+      if (cmsType === 'date_only') {
+        // Extract just the date portion; if it includes time in UTC,
+        // parse properly so the date doesn't shift across day boundaries
+        if (str.includes('T')) {
+          return str.slice(0, 10);
+        }
+        return str;
+      }
+      // For CMS 'date' (datetime), ensure we have a full ISO timestamp
+      if (!str.includes('T')) {
+        return `${str}T00:00:00.000Z`;
+      }
+      return str;
+    }
 
     case 'multipleRecordLinks':
       return Array.isArray(value) ? value.join(', ') : String(value);

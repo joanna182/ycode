@@ -598,6 +598,9 @@ async function reconcileRecords(
       seenCmsItemIds.add(cmsItemId);
       const newValues = await buildRecordValues(record, ctx, existingValues[cmsItemId]);
       if (hasChanges(newValues, existingValues[cmsItemId])) {
+        if (autoFields.updatedAtFieldId) {
+          newValues[autoFields.updatedAtFieldId] = new Date().toISOString();
+        }
         toUpdate.push({ cmsItemId, values: newValues });
       }
     } else {
