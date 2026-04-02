@@ -14,7 +14,8 @@ import { randomUUID } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { getAppSettingValue, setAppSetting } from '@/lib/repositories/appSettingsRepository';
 import { slugify } from '@/lib/collection-utils';
-import { isAssetFieldType, isMultipleAssetField } from '@/lib/collection-field-utils';
+import { isAssetFieldType, isMultipleAssetField, getAssetCategoryForField } from '@/lib/collection-field-utils';
+import { ALLOWED_MIME_TYPES } from '@/lib/asset-constants';
 import { uploadFile } from '@/lib/file-upload';
 import { getFieldsByCollectionId, getFieldsByKeyAcrossCollections, createField } from '@/lib/repositories/collectionFieldRepository';
 import {
@@ -230,12 +231,17 @@ interface SyncContext {
   slugCtx: SlugContext | null;
   assetCache: Map<string, string>;
   /** CMS field IDs mapped from attachments — pre-computed for perf */
-  attachmentFieldIds: Map<string, boolean>;
+  attachmentFieldIds: Map<string, AttachmentFieldInfo>;
   /** Fingerprints of existing attachment data keyed by "recordId:fieldId" */
   attachmentFingerprintCache: Map<string, string>;
   autoFields: AutoFields;
   /** Per-field resolvers that map Airtable record IDs to CMS item UUIDs for reference fields */
   referenceResolvers: Map<string, Map<string, string>>;
+}
+
+interface AttachmentFieldInfo {
+  isMultiple: boolean;
+  allowedMimeTypes: string[] | null;
 }
 
 interface SlugContext {
@@ -352,9 +358,9 @@ async function buildRecordValues(
 
   for (const mapping of ctx.fieldMapping) {
     const rawValue = record.fields[mapping.airtableFieldId];
-    const isMultipleAsset = ctx.attachmentFieldIds.get(mapping.cmsFieldId);
+    const attachmentInfo = ctx.attachmentFieldIds.get(mapping.cmsFieldId);
 
-    if (isMultipleAsset !== undefined) {
+    if (attachmentInfo) {
       const fpKey = `${record.id}:${mapping.cmsFieldId}`;
       const fp = attachmentFingerprint(rawValue);
 
@@ -368,7 +374,9 @@ async function buildRecordValues(
         }
       }
 
-      values[mapping.cmsFieldId] = await uploadAttachmentsAsAssets(rawValue, ctx.assetCache, isMultipleAsset);
+      values[mapping.cmsFieldId] = await uploadAttachmentsAsAssets(
+        rawValue, ctx.assetCache, attachmentInfo.isMultiple, attachmentInfo.allowedMimeTypes
+      );
       ctx.attachmentFingerprintCache.set(fpKey, fp);
       continue;
     }
@@ -410,15 +418,24 @@ async function buildRecordValues(
  * Download Airtable attachments and upload as CMS assets.
  * Single-asset fields return one UUID; multi-asset fields return a JSON array of UUIDs.
  * Downloads up to ATTACHMENT_CONCURRENCY files in parallel.
+ * When allowedMimeTypes is set, only attachments with a matching MIME type are included.
  */
 async function uploadAttachmentsAsAssets(
   rawValue: unknown,
   cache: Map<string, string>,
-  isMultiple: boolean
+  isMultiple: boolean,
+  allowedMimeTypes: string[] | null
 ): Promise<string | null> {
   if (!Array.isArray(rawValue) || rawValue.length === 0) return null;
 
-  const attachments = isMultiple ? rawValue : [rawValue[0]];
+  const filtered = allowedMimeTypes
+    ? rawValue.filter((a) => {
+      const mime = (a as Record<string, unknown>)?.type as string | undefined;
+      return mime ? allowedMimeTypes.includes(mime) : false;
+    })
+    : rawValue;
+
+  const attachments = isMultiple ? filtered : filtered.slice(0, 1);
 
   // Separate cached vs uncached to avoid redundant downloads
   const tasks: Array<{ att: Record<string, unknown>; url: string; index: number }> = [];
@@ -524,10 +541,14 @@ async function reconcileRecords(
   const multiAssetFieldIdSet = new Set(
     fields.filter((f) => isMultipleAssetField(f)).map((f) => f.id)
   );
-  const attachmentFieldIds = new Map<string, boolean>();
+  const attachmentFieldIds = new Map<string, AttachmentFieldInfo>();
   for (const mapping of fieldMapping) {
     if (mapping.airtableFieldType === 'multipleAttachments' && isAssetFieldType(mapping.cmsFieldType as CollectionFieldType)) {
-      attachmentFieldIds.set(mapping.cmsFieldId, multiAssetFieldIdSet.has(mapping.cmsFieldId));
+      const category = getAssetCategoryForField(mapping.cmsFieldType as CollectionFieldType);
+      attachmentFieldIds.set(mapping.cmsFieldId, {
+        isMultiple: multiAssetFieldIdSet.has(mapping.cmsFieldId),
+        allowedMimeTypes: ALLOWED_MIME_TYPES[category],
+      });
     }
   }
 

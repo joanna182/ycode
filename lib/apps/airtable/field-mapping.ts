@@ -43,7 +43,7 @@ const FIELD_TYPE_MAP: Record<AirtableFieldType, CollectionFieldType> = {
   richText: 'rich_text',
   duration: 'number',
   lastModifiedTime: 'date',
-  button: 'text',
+  button: 'link',
   createdBy: 'text',
   lastModifiedBy: 'text',
   externalSyncSource: 'text',
@@ -85,7 +85,7 @@ const AIRTABLE_FIELD_TYPE_LABELS: Partial<Record<AirtableFieldType, string>> = {
   richText: 'Rich text',
   duration: 'Duration',
   lastModifiedTime: 'Modified time',
-  button: 'Button',
+  button: 'Button URL',
   createdBy: 'Created by',
   lastModifiedBy: 'Modified by',
   externalSyncSource: 'Sync source',
@@ -126,12 +126,13 @@ export function isFieldTypeCompatible(
   // image accepts attachments and explicit URLs
   if (cmsType === 'image' && (airtableType === 'multipleAttachments' || airtableType === 'url')) return true;
 
-  // link accepts URL or text fields
-  const linkLikeAirtable: AirtableFieldType[] = ['url', 'singleLineText', 'formula'];
+  // link accepts URL, text, or button fields
+  const linkLikeAirtable: AirtableFieldType[] = ['url', 'singleLineText', 'formula', 'button'];
   if (cmsType === 'link' && linkLikeAirtable.includes(airtableType)) return true;
 
-  // email accepts email or text fields
-  if (cmsType === 'email' && (airtableType === 'email' || airtableType === 'singleLineText')) return true;
+  // email accepts email, text, or collaborator fields
+  const emailLikeAirtable: AirtableFieldType[] = ['email', 'singleLineText', 'singleCollaborator', 'createdBy', 'lastModifiedBy'];
+  if (cmsType === 'email' && emailLikeAirtable.includes(airtableType)) return true;
 
   // phone accepts phone or text fields
   if (cmsType === 'phone' && (airtableType === 'phoneNumber' || airtableType === 'singleLineText')) return true;
@@ -197,10 +198,12 @@ export function transformFieldValue(
       return extractAttachmentUrl(value);
 
     case 'singleCollaborator':
-      return extractCollaboratorName(value);
+    case 'createdBy':
+    case 'lastModifiedBy':
+      return extractCollaboratorField(value, cmsType);
 
     case 'multipleCollaborators':
-      return extractMultipleCollaboratorNames(value);
+      return extractMultipleCollaboratorFields(value, cmsType);
 
     case 'date':
     case 'dateTime':
@@ -225,18 +228,28 @@ export function transformFieldValue(
     case 'multipleRecordLinks':
       return Array.isArray(value) ? value.join(', ') : String(value);
 
+    case 'lookup':
+    case 'rollup':
     case 'multipleLookupValues':
-      return Array.isArray(value) ? value.map(String).join(', ') : String(value);
+      if (Array.isArray(value)) {
+        return value
+          .filter((v) => v !== null && v !== undefined && typeof v !== 'object')
+          .map(String)
+          .join(', ') || null;
+      }
+      return typeof value === 'object' ? null : String(value);
 
     case 'barcode':
       return typeof value === 'object' && value !== null
         ? (value as Record<string, unknown>).text as string ?? null
         : String(value);
 
-    case 'button':
-      return typeof value === 'object' && value !== null
-        ? (value as Record<string, unknown>).label as string ?? null
-        : null;
+    case 'button': {
+      if (typeof value !== 'object' || value === null) return null;
+      const btn = value as Record<string, unknown>;
+      if (cmsType === 'link') return btn.url as string ?? null;
+      return btn.label as string ?? null;
+    }
 
     default:
       return typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -248,16 +261,20 @@ function extractAttachmentUrl(value: unknown): string | null {
   return value[0]?.url ?? null;
 }
 
-function extractCollaboratorName(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const collab = value as Record<string, unknown>;
+function getCollaboratorProp(collab: Record<string, unknown>, cmsType?: CollectionFieldType): string | null {
+  if (cmsType === 'email') return (collab.email as string) ?? null;
   return (collab.name as string) ?? (collab.email as string) ?? null;
 }
 
-function extractMultipleCollaboratorNames(value: unknown): string | null {
+function extractCollaboratorField(value: unknown, cmsType?: CollectionFieldType): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  return getCollaboratorProp(value as Record<string, unknown>, cmsType);
+}
+
+function extractMultipleCollaboratorFields(value: unknown, cmsType?: CollectionFieldType): string | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   return value
-    .map((c) => (c as Record<string, unknown>).name ?? (c as Record<string, unknown>).email ?? '')
+    .map((c) => getCollaboratorProp(c as Record<string, unknown>, cmsType) ?? '')
     .filter(Boolean)
     .join(', ');
 }
