@@ -12,7 +12,13 @@
     "app/(builder)/ycode/mcp/*/route.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/airtable-webhooks",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }
 
 
